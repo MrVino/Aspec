@@ -157,11 +157,6 @@ class ASpec(object):
         total_deviation_hodi_peaks = 0
         
 
-
-        mapping_rows = []
-        mapping_columns = []
-
-
         print("Polynomial order = ", pol_order)
         if plot:
             plt.figure()
@@ -268,12 +263,6 @@ class ASpec(object):
                 unsorted_wavelengths.append(np.polyval(polcoefs, x))
                 #Add the pixel intensities of this row accordingly
                 unsorted_intensities.append(image_data[r,:])
-                
-                if pol_order == 1:
-                    wls_mapped_backwards = np.arange(self.lambda_min,max(unsorted_wavelengths),binwidth)
-                    columns_mapped_backwards = (wls_mapped_backwards - polcoefs[1])/polcoefs[0]
-                    rows_for_map = np.full(len(columns_mapped_backwards),r)
-                
                 
                 '''
                 plt.figure()
