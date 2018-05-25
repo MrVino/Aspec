@@ -1,2 +1,2 @@
 # Aspec
-Datareduction pipelines for the KIEM project
+Datareduction pipelines and spectral fitting routines for the KIEM project
