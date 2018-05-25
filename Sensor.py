@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 #import matplotlib.ticker as mtick
 from scipy.misc import imread, imsave
+from scipy import ndimage
 import pypylon
 import sys
 #from scipy.signal import argrelextrema, savgol_filter
@@ -151,7 +152,7 @@ class ASpec(object):
         #Pixel position array (later used to convert to wavelength)
         x = np.arange(self.nx)
   
-        f, axarr = plt.subplots(min(max(1,pol_order), 2), (pol_order+1)%min(max(1,pol_order), 2) + (pol_order+1)//min(max(1,pol_order), 2), sharex=True)
+        f, axarr = plt.subplots(min(max(1,pol_order), 2), (pol_order+1)%min(max(1,pol_order), 2) + (pol_order+1)//min(max(1,pol_order), 2), sharey=True)
 
         total_deviation_all_peaks = 0
         total_deviation_hodi_peaks = 0
@@ -227,7 +228,6 @@ class ASpec(object):
                 #This polynomial determines how the pixel positions are converted to wavelengths for this row
                 polcoefs = np.polyfit(hodi_peak_positions, self.hodi_peaks, pol_order)
                 
-                print("Polynomial coefficients:", polcoefs[0], polcoefs[1])
                 #Add the polynomial coefficients of this row to the matrix for the whole fiber              
                 pol_coefs_matrix.append(polcoefs)
                 t8 = time.time()
@@ -249,13 +249,13 @@ class ASpec(object):
                         suffix = 'rd'
                         
                     if pol_order>1:
-                        axarr[(pol_order-idx)%2, (pol_order-idx)//2].scatter([r], [pc])
+                        axarr[(pol_order-idx)%2, (pol_order-idx)//2].scatter([pc], [r])
                         axarr[(pol_order-idx)%2, (pol_order-idx)//2].set_title(str(pol_order-idx)+suffix+' order coeff')
                     elif pol_order==1:
-                        axarr[(pol_order-idx)].scatter([r], [pc])
+                        axarr[(pol_order-idx)].scatter([pc], [r])
                         axarr[(pol_order-idx)].set_title(str(pol_order-idx)+suffix+' order coeff')
                     else:
-                        axarr.scatter([r], [pc])
+                        axarr.scatter([pc], [r])
                         axarr.set_title(str(pol_order-idx)+suffix+' order coeff')                                                
                   
                 
@@ -390,17 +390,209 @@ class ASpec(object):
         
         
             if pol_order > 1:
-                axarr[idx%2, idx//2].set_ylim(min(pol_coefs_matrix[:,(pol_order-idx)])*0.99,max(pol_coefs_matrix[:,(pol_order-idx)])*1.01)
+                axarr[idx%2, idx//2].set_xlim(min(pol_coefs_matrix[:,(pol_order-idx)])*0.99,max(pol_coefs_matrix[:,(pol_order-idx)])*1.01)
             elif pol_order == 1:
-                axarr[idx].set_ylim(min(pol_coefs_matrix[:,(pol_order-idx)])*0.99,max(pol_coefs_matrix[:,(pol_order-idx)])*1.01) 
+                axarr[idx].set_xlim(min(pol_coefs_matrix[:,(pol_order-idx)])*0.99,max(pol_coefs_matrix[:,(pol_order-idx)])*1.01) 
             else:
-                axarr.set_ylim(min(pol_coefs_matrix[:,(pol_order-idx)])*0.99,max(pol_coefs_matrix[:,(pol_order-idx)])*1.01)
-                
+                axarr.set_xlim(min(pol_coefs_matrix[:,(pol_order-idx)])*0.99,max(pol_coefs_matrix[:,(pol_order-idx)])*1.01)
+            
+            axarr[idx].set_ylim(0,1200)
+              
         f.tight_layout()        
         f.savefig(str(self.n_fibers)+'fibers_'+str(pol_order)+'polynomial_orders.png')
        
         
         return fitted_wavelengths_all_fibers#total_deviation_all_peaks/55., total_deviation_hodi_peaks/25.  
+
+
+    def backwards_spectral_fitting(self, image, lower_margin=30, upper_margin=30, threshold=25, resolution=2):
+        #Alternative routine to derive the spectrum of a single fiber. 
+        #First the fibers are separated on the sensor based on their stacked intensity along the y-axis.
+        #Then for each fiber, the average position of the peak intensity on the y-axis is taken as the central row.
+        #For each row between central row - lower_margin and central row + upper_margin, where the median pixelvalue is above the threshold value, 
+        #this routine fits a polynomial to the positions of the 5 calibrated peaks from the HoDi filter. 
+        #With this polynomial fit, the pixel x-positions can be mapped to wavelength and backwards. 
+        #Finally, the polynomial fit is used to map a preset array with wavelenghts to the pixel in each row that corresponds to that wavelength.
+        #The pixel intensities found this way are averaged for every wavelength in the preset array. 
+    
+        #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
+        wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution ,resolution)
+
+    
+        plot = False
+    
+        #Create an empty dictionary to which we add the fitted wavelengths and corresponding intensities for each fiber
+        fitted_wavelengths_all_fibers = {}
+    
+        #Polynomial coefficients for the curve fitted to each fiber    
+        polynomial_coefficients = self.separate_fibers(image)
+        t5 = time.time()
+        print("Separating fibers took", t5-t4, "secs")
+        #Pixel position array (later used to convert to wavelength)
+        x = np.arange(self.nx)
+  
+        f, axarr = plt.subplots(1, 2, sharey=True)
+
+        total_deviation_all_peaks = 0
+        total_deviation_hodi_peaks = 0
+        
+
+
+
+
+        if plot:
+            plt.figure()
+        tfibers = time.time()
+        for i in range(self.n_fibers):
+            #Empty matrix to store the polynomial coefficients of each row belonging to this fiber
+            pol_coefs_matrix = []
+
+            #Empty lists to store the x- (column) and y-coordinates (row) to which the wavelengths in wls_mapped_backwards are mapped
+            mapping_rows = []
+            mapping_columns = []
+
+        
+            #Determine the 'central' rows of this fiber by taking the mean y-value of the 
+            mean_y_position_fiber = np.mean(np.polyval(polynomial_coefficients[:, i], x))
+            
+            
+            #The median pixel values for every row that belongs to this fiber
+            rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
+            print(rowmedians)
+            #Determine between which rows the median pixel values are larger than the threshold
+            loweredge =min(np.nonzero(rowmedians > threshold)[0])
+            upperedge = max(np.nonzero(rowmedians > threshold)[0])
+
+            #Create an array with the rows over which to loop                        
+            rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
+            print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
+            #rows = [np.int(mean_y_position_fiber)]
+            trows = time.time()
+            for r in rows:
+                
+                #Since the HoDi filter gives an absorption spectrum we take 255 - pixelvalue for each pixel in this row
+                #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
+                #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
+                #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
+                #The routine finds for local maxima than the 5 absorption lines that we are looking for.
+                peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
+                
+                
+                
+                
+
+                
+                '''
+                for p in peak_positions:
+                
+                    plt.vlines(p, 0, self.ny, linestyles='dashed', color='white', alpha=0.5)
+                    plt.text(p, 100, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')
+                '''
+                #plt.plot(255-image_data[r,:])
+                    
+                #An empty array to which we add the subset of the 5 calibrated absorption lines from all absorption lines found  
+                hodi_peak_positions = []
+            
+                #We loop over all HoDi wavelength peak position
+                t6 = time.time()
+                for wl in self.hodi_peaks:
+                    #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
+                    #The found peak that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
+                    peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
+                    #peak = self.find_nearest(enhanced_peaks, self.theoretical_position_on_detector(wl))
+                    hodi_peak_positions.append(peak)
+                    
+                    
+                    #plt.vlines(peak, 0, self.ny, linestyles='dashed', color='blue', alpha=0.5)
+                    #plt.text(peak, 50, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')            
+                t7 = time.time()
+                #print("Locating HoDi peaks took", t7-t7, "secs")
+                #Convert to a numpy array for faster and easier array operations
+                hodi_peak_positions = np.array(hodi_peak_positions)
+            
+          
+                #Fit a polynomial with order pol_order to the positions
+                #This polynomial determines how the pixel positions are converted to wavelengths for this row
+                polcoefs = np.polyfit(hodi_peak_positions, self.hodi_peaks, 1)
+                
+                #Add the polynomial coefficients of this row to the matrix for the whole fiber              
+                pol_coefs_matrix.append(polcoefs)
+                t8 = time.time()
+                #print("Fitting the polynomial took", t8-t7, "secs")
+                
+                
+                #Plotting routine for the found coefficients
+                for idx, pc in enumerate(polcoefs):
+                    
+
+                    #print(r, pc)
+                    if idx==1:
+                        suffix = 'th'
+                    elif idx == 0:
+                        suffix = 'st'
+                        
+                    axarr[(1-idx)].scatter([pc], [r])
+                    axarr[(1-idx)].set_title(str(1-idx)+suffix+' order coeff')                                     
+                  
+                
+                
+
+                #Convert the preset wavelengths to pixel positions (column = x-positions, row = y-positions)
+                #Both are lists are equally long and the n-th entry of each list together give an x,y-position
+                mapping_columns.append((wls_mapped_backwards - polcoefs[1])/polcoefs[0])
+                mapping_rows.append(np.full(len(wls_mapped_backwards),r))
+                
+                
+            
+            
+            
+            
+            #We need to flatten the pixel coordinates such that we have a 1-dimensional array for each fiber
+            t9 = time.time() 
+            print("Looping over rows took", t9-trows, "secs")
+            mapping_columns = np.array(mapping_columns).flatten()
+            mapping_rows = np.array(mapping_rows).flatten()
+            t10 = time.time()
+            print("Flattening arrays took", t10-t9, "secs")
+            
+            #The ndimage.map_coordinates Scipy function maps the wavelength to its corresponding pixel position for all rows belonging to this fiber
+            #this gives us 1 long array in which the intensities per row are lined up 
+            interpolated_intensities = ndimage.map_coordinates(image, [mapping_rows, mapping_columns])
+            
+            #We need to take the mean of all elements that are spaced len(wls_mapped_backwards) apart, as those elements are the intensities 
+            #belonging to the same wavelength in different rows
+            averaged_intensities = np.mean(interpolated_intensities.reshape(-1, len(wls_mapped_backwards)), axis=0)
+            
+                
+            if plot:
+                plt.plot(wls_mapped_backwards, averaged_intensities)
+            
+            #Add the binned wavelengths and intensities of this fiber to a dictionary for all fibers
+            fitted_wavelengths_all_fibers[i] = {'wavelengths':wls_mapped_backwards, 'intensities':averaged_intensities}
+                     
+        
+        pol_coefs_matrix = np.array(pol_coefs_matrix)
+                
+        #Change the scaling of the y-axis 
+        for idx in np.arange(2):
+        
+            axarr[idx].set_xlim(min(pol_coefs_matrix[:,(1-idx)])*0.99,max(pol_coefs_matrix[:,(1-idx)])*1.01) 
+            axarr[idx].set_ylim(0,1200)
+
+                
+        f.tight_layout()        
+        f.savefig(str(self.n_fibers)+'fibers_backwards_spectral_fitting.png')
+       
+        
+        return fitted_wavelengths_all_fibers#total_deviation_all_peaks/55., total_deviation_hodi_peaks/25.  
+
+
+
+
+
+
+
+
         
     def box_extraction(self, image):
         data = image
@@ -730,30 +922,34 @@ if __name__ in ("__main__","__plot__"):
         performance = []
         #for po in all_orders:
         #performance.append(analyze.spectral_fitting(image_data, binwidth=1, pol_order = po))
-        wl_dict = analyze.spectral_fitting(image_data, binwidth=2, pol_order = 1)
+        wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
+        wl_dict_backwards = analyze.backwards_spectral_fitting(image_data, resolution=1)
         #print(performance)
         tend = time.time()
         print("Total time taken", tend-tstart, "secs")
         plt.show()
         plt.figure()
-        for f in wl_dict:
+        for f in wl_dict_backwards:
             bwls = wl_dict[f]['wavelengths']
             bint = wl_dict[f]['intensities']
-            peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bint), thres=0.25, min_dist=10))
+            bwls_backwards = wl_dict_backwards[f]['wavelengths']
+            bint_backwards = wl_dict_backwards[f]['intensities']            
+            peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bint_backwards), thres=0.25, min_dist=10))
             
             plt.plot(bwls, bint, label='Fiber '+str(f))
+            plt.plot(bwls_backwards, bint_backwards, label='Fiber '+str(f)+' (b)', linestyle='solid', color='black', alpha=0.5)
             
-            for wl in analyze.hodi_peaks:#[416, 444, 468, 482, 522, 537, 575, 641, 740, 794, 864]:#
+            for wl in [416, 444, 468, 482, 522, 537, 575, 641, 740, 794, 864]:#analyze.hodi_peaks:#
 
-                wl_estimate = analyze.find_nearest(bwls[peak_positions_fiber], wl)
+                wl_estimate = analyze.find_nearest(bwls_backwards[peak_positions_fiber], wl)
                 plt.vlines(wl, 0, 300, linestyles='dotted', color=analyze.wavelength_to_rgb(wl))                
                 plt.vlines(wl_estimate, 0, 300, linestyles='dashed', color='black', alpha=0.5)
 
-        '''    
+          
         for pwl in analyze.hodi_peaks:
             
             plt.vlines(pwl, 0, 300, linestyles='dotted', color='black', alpha=0.33)
-        '''
+        
         plt.legend(loc='best', fancybox=True, framealpha=0.5, frameon=False)    
         plt.show()        
             
