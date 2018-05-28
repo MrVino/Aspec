@@ -12,7 +12,7 @@ import time
 
 
 class ASpec(object):
-    def __init__(self, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 14.5, f=100., nfibers=10):
+    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 14.5, f=100.):
        
         #number of pixels in the x-direction
         self.nx = nx
@@ -35,12 +35,22 @@ class ASpec(object):
         
         #Reference detector position (in nm)
         self.p0 = np.tan(self.exit_angle(lambda_min))*self.f
-        
-        #The number of fibers used in the spectrograph
-        self.n_fibers = nfibers
 
         #Set the peak positions of the calibration filter (DON'T FORGET TO CHANGE WHEN FILTER IS RECALIBRATED)
         self.LiquidCalibrationFilter()
+        
+        #Determine how many fibers are used. This sets the number of fibers, self.n_fibers, and the polynomial coefficients 
+        #that belong to each fiber, self.fiber_positions_polynomial_coefficients.
+            
+        if image is None:
+            self.connect_camera()
+            image = self.take_snapshots(1)
+
+        self.separate_fibers(image)
+
+
+        #self.polcoefs_0thorder
+        #self.polcoefs_1storder
 
 
     def LiquidCalibrationFilter(self):
@@ -87,7 +97,9 @@ class ASpec(object):
         xcs = []
         #Empty array to add the positions of the peaks
         ypositions = []
-
+        #Empty array to add the number of peaks found
+        npeaks = []
+        
         for i in range(num_steps):
 
             #The median (taking over the width) pixel value for each y-value
@@ -99,20 +111,32 @@ class ASpec(object):
             #The center (x-position) of the current bin
             xc = np.array( (i+0.5)*width + x0 )
             
-            #If the number of peaks found corresponds to the number of fibers used,
-            #then we save the positions to determine the curvature of each spectrum 
-            if len(ypos)==self.n_fibers:
             
-                plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
+            plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
 
-                ypositions.append(ypos)
-                xcs.append(xc)
+            ypositions.append(ypos)
+            xcs.append(xc)
+            npeaks.append(len(ypos))
 		
-
+        
+        #npeaks = np.array(npeaks)
+        
+        #Take the median to determine the number of fibers used. sometimes not all peaks, i.e. fibers, are found. 
+        #We assume that the median returns the number of fibers used.
+        self.n_fibers = int(np.median(npeaks))
+        
+        print("Number of fibers = ", self.n_fibers)
 
 	    #turn the lists into arrays that can be used by the polyfit routine
         xcs = np.array(xcs)
-        ypositions = np.vstack(ypositions)
+        ypositions = np.array(ypositions) 
+        
+        #If the number of peaks found corresponds to the number of fibers used,
+        #then we use the positions to determine the curvature of each spectrum 
+        indices_all_fibers_found = np.where(np.isclose(npeaks, self.n_fibers))
+        xcs = xcs[indices_all_fibers_found]
+        ypositions = ypositions[indices_all_fibers_found]
+        
         
         # Fit a low order polynomial to the positions
         polcoefs = np.polyfit(xcs, ypositions, 3)
@@ -126,8 +150,24 @@ class ASpec(object):
             plt.plot(x, y, 'C0')
 
 
-        return polcoefs
+        self.fiber_positions_polynomial_coefficients = polcoefs
 
+
+    def convert_wavelength_to_pixel(self, wavelengths, row):
+        #'polynomialception'
+        #Use the saved polynomial coefficients to calculate, as a function of rownumber,  the 0th and 1st order polynomial coefficients 
+        #that are necessary to convert pixelposition to wavelength and viceversa for that row.
+        
+        return  (wavelengths - np.polyval(self.polcoefs_0thorder, row))/np.polyval(self.polcoefs_1storder, row)
+
+
+    def convert_pixel_to_wavelength(self, pixels, row):
+        #'polynomialception'
+        #Use the saved polynomial coefficients to calculate, as a function of rownumber, the 0th and 1st order polynomial coefficients 
+        #that are necessary to convert pixelposition to wavelength and viceversa for that row.   
+            
+        return np.polyval([np.polyval(self.polcoefs_1storder, row),np.polyval(self.polcoefs_0thorder, row)], pixels) 
+        
 
 
     def spectral_fitting(self, image, pol_order = 1, lower_margin=30, upper_margin=30, threshold=25, binwidth=2):
@@ -146,7 +186,7 @@ class ASpec(object):
         fitted_wavelengths_all_fibers = {}
     
         #Polynomial coefficients for the curve fitted to each fiber    
-        polynomial_coefficients = self.separate_fibers(image)
+        #polynomial_coefficients = self.separate_fibers(image)
         t5 = time.time()
         print("Separating fibers took", t5-t4, "secs")
         #Pixel position array (later used to convert to wavelength)
@@ -171,7 +211,7 @@ class ASpec(object):
             unsorted_intensities = []
         
             #Determine the 'central' rows of this fiber by taking the mean y-value of the 
-            mean_y_position_fiber = np.mean(np.polyval(polynomial_coefficients[:, i], x))
+            mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
             
             
             #The median pixel values for every row that belongs to this fiber
@@ -261,6 +301,7 @@ class ASpec(object):
                 
                 #Add the fitted wavelength positions of this row to the wavelengths that have been fitted for previous rows belonging to this fiber.    
                 unsorted_wavelengths.append(np.polyval(polcoefs, x))
+
                 #Add the pixel intensities of this row accordingly
                 unsorted_intensities.append(image_data[r,:])
                 
@@ -416,8 +457,7 @@ class ASpec(object):
         #The pixel intensities found this way are averaged for every wavelength in the preset array. 
     
         #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
-        wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution ,resolution)
-
+        wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution, resolution)
     
         plot = False
     
@@ -425,7 +465,7 @@ class ASpec(object):
         fitted_wavelengths_all_fibers = {}
     
         #Polynomial coefficients for the curve fitted to each fiber    
-        polynomial_coefficients = self.separate_fibers(image)
+        #polynomial_coefficients = self.separate_fibers(image)
         t5 = time.time()
         print("Separating fibers took", t5-t4, "secs")
         #Pixel position array (later used to convert to wavelength)
@@ -436,9 +476,6 @@ class ASpec(object):
         total_deviation_all_peaks = 0
         total_deviation_hodi_peaks = 0
         
-
-
-
 
         if plot:
             plt.figure()
@@ -453,7 +490,7 @@ class ASpec(object):
 
         
             #Determine the 'central' rows of this fiber by taking the mean y-value of the 
-            mean_y_position_fiber = np.mean(np.polyval(polynomial_coefficients[:, i], x))
+            mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
             
             
             #The median pixel values for every row that belongs to this fiber
@@ -534,19 +571,16 @@ class ASpec(object):
                     axarr[(1-idx)].scatter([pc], [r])
                     axarr[(1-idx)].set_title(str(1-idx)+suffix+' order coeff')                                     
                   
-                
-                
 
                 #Convert the preset wavelengths to pixel positions (column = x-positions, row = y-positions)
                 #Both are lists are equally long and the n-th entry of each list together give an x,y-position
+                
+                
+                
                 mapping_columns.append((wls_mapped_backwards - polcoefs[1])/polcoefs[0])
                 mapping_rows.append(np.full(len(wls_mapped_backwards),r))
                 
-                
-            
-            
-            
-            
+    
             #We need to flatten the pixel coordinates such that we have a 1-dimensional array for each fiber
             t9 = time.time() 
             print("Looping over rows took", t9-trows, "secs")
@@ -589,81 +623,116 @@ class ASpec(object):
 
 
 
+    def determine_polynomial_coefficients(self, image, lower_margin=30, upper_margin=30, threshold=25, resolution=2, pol_order=2):
+        #Alternative routine to derive the spectrum of a single fiber. 
+        #First the fibers are separated on the sensor based on their stacked intensity along the y-axis.
+        #Then for each fiber, the average position of the peak intensity on the y-axis is taken as the central row.
+        #For each row between central row - lower_margin and central row + upper_margin, where the median pixelvalue is above the threshold value, 
+        #this routine fits a polynomial to the positions of the 5 calibrated peaks from the HoDi filter. 
+        #With this polynomial fit, the pixel x-positions can be mapped to wavelength and backwards. 
+        #Finally, the polynomial fit is used to map a preset array with wavelenghts to the pixel in each row that corresponds to that wavelength.
+        #The pixel intensities found this way are averaged for every wavelength in the preset array. 
+    
+        #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
+        wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution, resolution)
+    
+        #Create an empty dictionary to which we add the fitted wavelengths and corresponding intensities for each fiber
+        fitted_wavelengths_all_fibers = {}
+    
+
+        #Pixel position array (later used to convert to wavelength)
+        x = np.arange(self.nx)
+        
+        coefficients_0thorder = []
+        coefficients_1storder = []
+        fitted_rows = []        
+
+        tfibers = time.time()
+        for i in range(self.n_fibers):
+
+            #Determine the 'central' rows of this fiber by taking the mean y-value of the 
+            mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
+                        
+            #The median pixel values for every row that belongs to this fiber
+            rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
+
+            #Determine between which rows the median pixel values are larger than the threshold
+            loweredge =min(np.nonzero(rowmedians > threshold)[0])
+            upperedge = max(np.nonzero(rowmedians > threshold)[0])
+
+            #Create an array with the rows over which to loop                        
+            rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
+            print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
+            #rows = [np.int(mean_y_position_fiber)]
+            trows = time.time()
+            for r in rows:
+                
+                #Since the HoDi filter gives an absorption spectrum we take 255 - pixelvalue for each pixel in this row
+                #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
+                #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
+                #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
+                #The routine finds for local maxima than the 5 absorption lines that we are looking for.
+                peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
+                
+                    
+                #An empty array to which we add the subset of the 5 calibrated absorption lines from all absorption lines found  
+                hodi_peak_positions = []
+            
+                #We loop over all HoDi wavelength peak position
+                t6 = time.time()
+                for wl in self.hodi_peaks:
+                    #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
+                    #The found peak that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
+                    peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
+                    hodi_peak_positions.append(peak)
+                              
+                t7 = time.time()
+
+                #Convert to a numpy array for faster and easier array operations
+                hodi_peak_positions = np.array(hodi_peak_positions)
+            
+          
+                #Fit a polynomial with order pol_order to the positions
+                #This polynomial determines how the pixel positions are converted to wavelengths for this row
+                polcoefs = np.polyfit(hodi_peak_positions, self.hodi_peaks, 1)
+                
+                #Add the polynomial coefficients of this row to the arrays for the whole image              
+                coefficients_0thorder.append(polcoefs[1])
+                coefficients_1storder.append(polcoefs[0])
+                fitted_rows.append(r)         
+                
+         
+            
+            
+        #We need to flatten the pixel coordinates such that we have a 1-dimensional array for each fiber
+        t9 = time.time() 
+        print("Looping over rows took", t9-trows, "secs")
+        coefficients_0thorder = np.array(coefficients_0thorder)#.flatten()
+        coefficients_1storder = np.array(coefficients_1storder)#.flatten()
+        fitted_rows = np.array(fitted_rows)
+            
+        self.polcoefs_0thorder = np.polyfit(fitted_rows, coefficients_0thorder, pol_order)          
+        self.polcoefs_1storder = np.polyfit(fitted_rows, coefficients_1storder, pol_order) 
 
 
+        plt.figure()
+                
+        f, axarr = plt.subplots(2, 1, sharex=True)
+            
+        axarr[0].scatter(fitted_rows, coefficients_1storder)
+        axarr[0].plot(np.arange(1200), np.polyval(self.polcoefs_1storder, np.arange(1200)))
+        axarr[0].set_title('1st order coeff')   
 
-
+        axarr[1].scatter(fitted_rows, coefficients_0thorder)
+        axarr[1].plot(np.arange(1200), np.polyval(self.polcoefs_0thorder, np.arange(1200)))
+        axarr[1].set_title('0th order coeff')
+             
+        plt.show()     
+        f.savefig(str(self.n_fibers)+'fitted_polynomial_coefficients.png')
         
-    def box_extraction(self, image):
-        data = image
-        #data = fits.getdata(filename)
-        #data = data[100::,:]
+        np.savetxt('polynomial_coeffcients.ini', (self.polcoefs_0thorder,self.polcoefs_1storder)) 
+       
         
-        box_width = 2
-        box_heigth = 100
-        
-        s = np.linspace(0, data.shape[1], data.shape[1]//box_width)
-        
-        
-        separated_fibers = self.separate_fibers(image)
-        
-        num_orders = separated_fibers.shape[1]
-        print("num_orders = ", num_orders)
-        poly_order = separated_fibers.shape[0]-1
-        print("Order of polynomial = ", poly_order)
-        Ny = data.shape[0]
-        Nx = data.shape[1]
-        
-        ccd_grid = make_pupil_grid([Nx,Ny],[Nx, Ny]).shift([Nx/2, Ny/2])
-        echelle_spectrum = Field(data.ravel(), ccd_grid)
-        
-        flux = np.zeros((num_orders, s.size))
-        order_offset = 27
-        for i in [0,]:#range(num_orders):
-        	order = i + order_offset
-        	# Position
-        	rx = s
-        	ry = np.polyval(separated_fibers[:, order], s) + 1
-        
-        	imshow_field(echelle_spectrum, aspect='auto', vmin=0, vmax=5000)
-        	plt.plot(rx, ry)
-        	plt.show()
-        	
-        	masky = (ccd_grid.y < (ry.max()+20)) * ( ccd_grid.y > (ry.min()-20) )
-        	masked_spectrum = echelle_spectrum[masky>0]
-        	masked_grid = CartesianGrid(UnstructuredCoords([ccd_grid.x[masky>0], ccd_grid.y[masky>0]]))
-        
-        
-        	start = time.time()
-        	for si in range(s.size):
-        		if si % 20 == 0:
-        			print(si)
-        		pixel_index = si
-        
-        		aperture = rectangular_aperture((box_width, box_heigth), (rx[pixel_index], ry[pixel_index]))(masked_grid)
-        		flux[order, pixel_index] = np.sum(masked_spectrum * aperture)
-        
-        		#plt.subplot(1,2,1)
-        		#imshow_field( np.log10(abs(echelle_spectrum)), vmin=0, vmax=3.5, aspect='auto')
-        		#plt.xlim([rx[si]-10, rx[si]+10])
-        		#plt.ylim([ry[si]-10, ry[si]+10])
-        		#plt.subplot(1,2,2)
-        		
-        		#imshow_field(aperture, aspect='auto')
-        		#plt.xlim([rx[si]-10, rx[si]+10])
-        		#plt.ylim([ry[si]-10, ry[si]+10])
-        
-        		#plt.show()
-        
-        	end = time.time()
-        	print("Elapsed {:g}".format(end-start))
-        
-        plt.plot(s, flux[order_offset])
-        plt.show()
-
-
-
-
 
     def sum_rows(self, image):
     
@@ -814,15 +883,7 @@ if __name__ in ("__main__","__plot__"):
 
     args = parser.parse_args()
 
-    analyze = ASpec(nfibers=args.n_fibers)
-    
-    #Relevant wavelengths in nm: 401.7, 636.7, 855.7 correspond to the lasers used and 610 to the cutoff wavelength of the low-pass filter
-    wavelengths = [401.7, 636.7, 855.7, 610.]#, 360., 950., 1000., 610.]
 
-    spectrum_width_pixels =  analyze.theoretical_position_on_detector(max(wavelengths)) - analyze.theoretical_position_on_detector(min(wavelengths))
-    spectrum_width_mm = spectrum_width_pixels*analyze.pxl/1.e6
-
-    print(spectrum_width_pixels, spectrum_width_mm)
 
 
     if args.live:
@@ -830,9 +891,7 @@ if __name__ in ("__main__","__plot__"):
         #To use this script with saved images, pypylon is not necessarily installed 
         import pypylon
         plt.style.use('dark_background')
-        
-        analyze.connect_camera()
-        analyze.camera_properties()
+        analyze = ASpec()        
             
         
         for image_data in analyze.take_snapshots(1):
@@ -884,12 +943,15 @@ if __name__ in ("__main__","__plot__"):
 
                     
     elif args.file:
+    
+    
         #Read the image from file and make sure that the pixels and their corresponding values are floats
         print("Reading in image...")
         t0 = time.time()
         image_data = imread(args.file).astype(np.float32)
         t1 = time.time()
         print("took", t1-t0, "secs")
+        analyze = ASpec(image=image_data)  
         #image_data_cont = imread("HDR_stacked_continuum.tiff").astype(np.float32)
         #image_data_hodi = imread("HDR_stacked_HoDi_absorption.tiff").astype(np.float32)
         #image_data = image_data_cont-image_data_hodi
@@ -924,6 +986,9 @@ if __name__ in ("__main__","__plot__"):
         #performance.append(analyze.spectral_fitting(image_data, binwidth=1, pol_order = po))
         wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
         wl_dict_backwards = analyze.backwards_spectral_fitting(image_data, resolution=1)
+        
+        #analyze.determine_polynomial_coefficients(image_data)
+        
         #print(performance)
         tend = time.time()
         print("Total time taken", tend-tstart, "secs")
