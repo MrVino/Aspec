@@ -48,9 +48,9 @@ class ASpec(object):
 
         self.separate_fibers(image)
 
-
-        #self.polcoefs_0thorder
-        #self.polcoefs_1storder
+        #saved_pol_coefficients = np.loadtxt('polynomial_coefficients.ini')
+        #self.polcoefs_0thorder = saved_pol_coefficients[0]
+        #self.polcoefs_1storder = saved_pol_coefficients[1]
 
 
     def LiquidCalibrationFilter(self):
@@ -729,8 +729,9 @@ class ASpec(object):
              
         plt.show()     
         f.savefig(str(self.n_fibers)+'fitted_polynomial_coefficients.png')
-        
-        np.savetxt('polynomial_coeffcients.ini', (self.polcoefs_0thorder,self.polcoefs_1storder)) 
+        print("0th order coefficients ", self.polcoefs_0thorder)
+        print("1st order coefficients ", self.polcoefs_1storder)
+        np.savetxt('polynomial_coefficients.ini', (self.polcoefs_0thorder,self.polcoefs_1storder)) 
        
         
 
@@ -984,10 +985,10 @@ if __name__ in ("__main__","__plot__"):
         performance = []
         #for po in all_orders:
         #performance.append(analyze.spectral_fitting(image_data, binwidth=1, pol_order = po))
-        wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
-        wl_dict_backwards = analyze.backwards_spectral_fitting(image_data, resolution=1)
+        #wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
+        #wl_dict_backwards = analyze.backwards_spectral_fitting(image_data, resolution=1)
         
-        #analyze.determine_polynomial_coefficients(image_data)
+        analyze.determine_polynomial_coefficients(image_data)
         
         #print(performance)
         tend = time.time()
