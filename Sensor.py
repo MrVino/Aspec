@@ -12,7 +12,7 @@ import time
 
 
 class ASpec(object):
-    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 14.5, f=100.):
+    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100.):
        
         #number of pixels in the x-direction
         self.nx = nx
@@ -44,7 +44,9 @@ class ASpec(object):
             
         if image is None:
             self.connect_camera()
-            image = self.take_snapshots(1)
+            for image_data in self.take_snapshots(1):
+                image = image_data
+            print(image)
 
         self.separate_fibers(image)
 
@@ -56,7 +58,7 @@ class ASpec(object):
     def LiquidCalibrationFilter(self):
     
         #Peak positions in nm of Hellma liquid HoDi UV45 filter with serial no. 0028 (calibrated on 1-3-2018)
-        peak_wls = np.array([444.20, 575.00, 640.60, 740.00, 864.00]) #241.20, 353.80
+        peak_wls = np.array([416., 468., 794, 444.20, 640.60, 740.00, 864.00]) #np.array([444.20, 640.60, 740.00, 864.00])# #np.array([444.20, 575.00, 640.60, 740.00, 864.00]) #241.20, 353.80
         #peak_wls = np.array([241, 278, 287, 347, 354, 361, 416, 444, 468, 482, 512, 522, 537, 575, 641, 732, 740, 794, 864, 900, 950, 1000, 610.])
         #Only use the once that are larger than our lower wavelength limit
         self.hodi_peaks = peak_wls[peak_wls>self.lambda_min]
@@ -127,16 +129,16 @@ class ASpec(object):
         
         print("Number of fibers = ", self.n_fibers)
 
-	    #turn the lists into arrays that can be used by the polyfit routine
+	    #turn the lists into arrays that can be used by the polyfit routine        
         xcs = np.array(xcs)
-        ypositions = np.array(ypositions) 
-        
+        ypositions = np.array(ypositions)
+
         #If the number of peaks found corresponds to the number of fibers used,
         #then we use the positions to determine the curvature of each spectrum 
         indices_all_fibers_found = np.where(np.isclose(npeaks, self.n_fibers))
-        xcs = xcs[indices_all_fibers_found]
-        ypositions = ypositions[indices_all_fibers_found]
         
+        xcs = xcs[indices_all_fibers_found]
+        ypositions = np.vstack(ypositions[indices_all_fibers_found])
         
         # Fit a low order polynomial to the positions
         polcoefs = np.polyfit(xcs, ypositions, 3)
@@ -223,8 +225,8 @@ class ASpec(object):
 
             #Create an array with the rows over which to loop                        
             rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
-            print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
             #rows = [np.int(mean_y_position_fiber)]
+            print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
             trows = time.time()
             for r in rows:
                 
@@ -355,7 +357,7 @@ class ASpec(object):
             
             
             #Determine the peak positions in the binned spectrum
-            peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bin_means), thres=0.25, min_dist=10))
+            peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bin_means), thres=0.25, min_dist=60))
             
             #Determine how much the peak position in the binned spectrum deviate from the actual peak position
             deviation_all_peaks = 0.
@@ -502,8 +504,8 @@ class ASpec(object):
 
             #Create an array with the rows over which to loop                        
             rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
-            print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
             #rows = [np.int(mean_y_position_fiber)]
+            print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
             trows = time.time()
             for r in rows:
                 
@@ -514,19 +516,23 @@ class ASpec(object):
                 #The routine finds for local maxima than the 5 absorption lines that we are looking for.
                 peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
                 
+                #mapped_row = ndimage.map_coordinates(image, [np.full(len(x),r), x], prefilter=False, order=5)
+                
+                #peak_positions = np.array(peakutils.indexes((255-mapped_row), thres=0.5, min_dist=60))
                 
                 
                 
-
                 
                 '''
                 for p in peak_positions:
                 
-                    plt.vlines(p, 0, self.ny, linestyles='dashed', color='white', alpha=0.5)
-                    plt.text(p, 100, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')
-                '''
+                    plt.vlines(p, 0, self.ny, linestyles='dashed', color='black', alpha=0.5)
+                    #plt.text(p, 100, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')
+                
                 #plt.plot(255-image_data[r,:])
-                    
+                plt.plot(image[r,:])
+                plt.plot(mapped_row, color='black', linestyle='dotted')
+                '''
                 #An empty array to which we add the subset of the 5 calibrated absorption lines from all absorption lines found  
                 hodi_peak_positions = []
             
@@ -540,7 +546,7 @@ class ASpec(object):
                     hodi_peak_positions.append(peak)
                     
                     
-                    #plt.vlines(peak, 0, self.ny, linestyles='dashed', color='blue', alpha=0.5)
+                    #plt.vlines(peak, 0, self.ny, linestyles='dotted', color='blue', alpha=0.5)
                     #plt.text(peak, 50, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')            
                 t7 = time.time()
                 #print("Locating HoDi peaks took", t7-t7, "secs")
@@ -777,7 +783,7 @@ class ASpec(object):
         # Open camera and grep some images
         self.cam.open()
         
-        self.cam.properties['ExposureTime'] = 400.0 
+        self.cam.properties['ExposureTime'] = 1000.#100000.0#
         
 
 
@@ -893,7 +899,7 @@ if __name__ in ("__main__","__plot__"):
         import pypylon
         plt.style.use('dark_background')
         analyze = ASpec()        
-            
+        wavelengths = [444.20, 575.00, 610., 640.60, 740.00, 864.00]#[401.7, 610., 636.7 , 855.7]#
         
         for image_data in analyze.take_snapshots(1):
         
@@ -905,7 +911,7 @@ if __name__ in ("__main__","__plot__"):
             h = plt.imshow(image_data, origin='lower', cmap='gist_gray',vmin=0, vmax=255)
             line, = plt.plot(image_data[row,:])
             #Plot the relevant wavelengths to align the spectrograph
-            for wl in analyze.hodi_peaks:#wavelengths:##
+            for wl in wavelengths:#analyze.hodi_peaks:##
                 analyze.plot_wavelength(wl)
             #Indicate the row from which the spectrum is shown
             plt.hlines(row, 0, 1920, linestyles='dotted', color='blue', alpha=0.33)
@@ -985,36 +991,38 @@ if __name__ in ("__main__","__plot__"):
         performance = []
         #for po in all_orders:
         #performance.append(analyze.spectral_fitting(image_data, binwidth=1, pol_order = po))
-        #wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
-        #wl_dict_backwards = analyze.backwards_spectral_fitting(image_data, resolution=1)
+        wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
+        wl_dict_backwards = analyze.backwards_spectral_fitting(image_data, resolution=1)
         
-        analyze.determine_polynomial_coefficients(image_data)
+        #analyze.determine_polynomial_coefficients(image_data)
         
         #print(performance)
         tend = time.time()
         print("Total time taken", tend-tstart, "secs")
         plt.show()
         plt.figure()
+        
         for f in wl_dict_backwards:
             bwls = wl_dict[f]['wavelengths']
             bint = wl_dict[f]['intensities']
             bwls_backwards = wl_dict_backwards[f]['wavelengths']
             bint_backwards = wl_dict_backwards[f]['intensities']            
-            peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bint_backwards), thres=0.25, min_dist=10))
+            peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bint_backwards), thres=0.25, min_dist=5))
             
             plt.plot(bwls, bint, label='Fiber '+str(f))
             plt.plot(bwls_backwards, bint_backwards, label='Fiber '+str(f)+' (b)', linestyle='solid', color='black', alpha=0.5)
             
-            for wl in [416, 444, 468, 482, 522, 537, 575, 641, 740, 794, 864]:#analyze.hodi_peaks:#
+            for wl in [416, 444, 468, 482, 512, 522, 537, 575, 641, 732, 740, 794, 864]:#analyze.hodi_peaks:#
 
                 wl_estimate = analyze.find_nearest(bwls_backwards[peak_positions_fiber], wl)
                 plt.vlines(wl, 0, 300, linestyles='dotted', color=analyze.wavelength_to_rgb(wl))                
                 plt.vlines(wl_estimate, 0, 300, linestyles='dashed', color='black', alpha=0.5)
-
+        
           
         for pwl in analyze.hodi_peaks:
             
             plt.vlines(pwl, 0, 300, linestyles='dotted', color='black', alpha=0.33)
+           
         
         plt.legend(loc='best', fancybox=True, framealpha=0.5, frameon=False)    
         plt.show()        
