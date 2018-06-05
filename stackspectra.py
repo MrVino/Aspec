@@ -2,20 +2,21 @@ import glob
 import matplotlib.pyplot as plt
 from scipy.misc import imread, imsave
 import numpy as np
+np.set_printoptions(threshold=np.inf)
 from skimage import io
 
 def stack_spectra():
     #path = './Basler spectra/Only LED'
     #path = './Basler spectra/With lasers'
     #path = './Basler spectra/LaserDrivenLightSource/new'#/composite'
-    path = '../Basler spectra/LaserDrivenLightSource/fiberguide/31-5-2018/'#Double fibers'
-    darkpath = '../Basler spectra/LaserDrivenLightSource/fiberguide/31-5-2018/'#Double fibers/darks'
+    path = '../Basler spectra/LaserDrivenLightSource/fiberguide/7 fibers/'#Double fibers'
+    darkpath = '../Basler spectra/LaserDrivenLightSource/fiberguide/7 fibers/'#Double fibers/darks'
     #darkpath = './Basler spectra/LaserDrivenLightSource/new/darks'#/darks'
     #dark_files = get_filepaths(full_path, '.FIT', 'dark')
     #bias = make_master_dark(dark_files)
     
-    science_files = glob.glob(path+"/ND1_OrderFilter_HoDi*")
-    dark_files = glob.glob(darkpath+"/ND1_OrderFilter_dark*")
+    science_files = glob.glob(path+"/OrderFilter_HoDi*")
+    dark_files = glob.glob(darkpath+"/OrderFilter_dark*")
 
     #science_files = glob.glob(path+"/NoFilter_HoDi_continuum**")
     #dark_files = glob.glob(darkpath+"/dark*")
@@ -35,13 +36,15 @@ def stack_spectra():
         print(np.amax(reduced_image))
     
     science_data = np.array(science_data)
+
     science_data -= np.median(science_data, axis=1, keepdims=True)
-    
     stacked_data = np.sum(science_data, axis=0)#/2
+    
+    stacked_data[stacked_data<0]=0
     
     plt.imshow(stacked_data)	
     plt.show()
-    imsave('Fiberguide_stacked_HoDi_absorption_f5_6_31-5-2018.tiff', stacked_data)
+    imsave('Fiberguide_stacked_HoDi_absorption_7fibers.tiff', stacked_data)
 
 
 def make_master_dark(dark_files):
