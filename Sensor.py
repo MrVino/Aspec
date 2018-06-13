@@ -191,21 +191,19 @@ class ASpec(object):
 
 
     def spectral_fitting(self, image, pol_order = 1, lower_margin=30, upper_margin=40, threshold=25, binwidth=2, onthefly=False):
-        #Routine that convert pixel positions to wavelength and stacks all the rows belonging to a single fiber. 
+        #Alternative routine to derive the spectrum of a single fiber. The main routine is backwards_spectral_fitting
+        #The pixel positions are converted to wavelengths and consequently all the rows belonging to a single fiber are stacked. 
         #First the fibers are separated on the sensor based on their stacked intensity along the y-axis with a separate routine.
         #Then for each fiber, the average position of the peak intensity along the y-axis is taken as the central row.
         #For each row between central row - lower_margin and central row + upper_margin, where the median pixelvalue is above the threshold value, 
         #this routine fits a polynomial to the positions of the calibrated peaks from the HoDi filter. 
+        #The polynomial fit can be done either 'on the fly' or the saved and calibrated polynomial coefficients are used.
         #With this polynomial fit, the x-positions can be converted from pixel position to wavelength. 
         #Finally, the wavelengths (and their corresponding intensities) are binned in wavelength bins with width = binwidth nanometer. 
     
         #Create an empty dictionary to which we add the fitted wavelengths and corresponding intensities for each fiber
         fitted_wavelengths_all_fibers = {}
-    
-        #Polynomial coefficients for the curve fitted to each fiber
-        t5 = time.time()
-        print("Separating fibers took", t5-t4, "secs")
-        
+            
         #Pixel position array (later used to convert to wavelength)
         x = np.arange(self.nx)
   
@@ -220,7 +218,8 @@ class ASpec(object):
             #Empty array to store the intensities of all rows belonging to this fiber
             unsorted_intensities = []
         
-            #Determine the 'central' rows of this fiber by taking the mean y-value of the 
+            #Determine the 'central' row of this fiber by taking the mean y-value of the peak positions on the y-axis
+            #This peak positions are determined from the polynomial curve that is fitted to each fiber
             mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
 
             fibernr = self.fiber_number(mean_y_position_fiber)
@@ -230,10 +229,15 @@ class ASpec(object):
             
             #The median pixel values for every row that belongs to this fiber
             rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
-            print(rowmedians)
+
             #Determine between which rows the median pixel values are larger than the threshold
-            loweredge =min(np.nonzero(rowmedians > threshold)[0])
-            upperedge = max(np.nonzero(rowmedians > threshold)[0])
+            try:
+                loweredge =min(np.nonzero(rowmedians > threshold)[0])
+                upperedge = max(np.nonzero(rowmedians > threshold)[0])
+
+            except ValueError as e:
+                print(rowmedians)
+                raise Exception('Threshold value is too low') from e
 
             #Create an array with the rows over which to loop                        
             rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
@@ -249,7 +253,6 @@ class ASpec(object):
                     #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
                     #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
                     #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
-                    #The routine finds for local maxima than the 5 absorption lines that we are looking for.
                     peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
                     
                     '''
@@ -267,7 +270,7 @@ class ASpec(object):
                     t6 = time.time()
                     for wl in self.hodi_peaks:
                         #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
-                        #The found peak that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
+                        #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
                         peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
                         hodi_peak_positions.append(peak)
                         
@@ -282,9 +285,6 @@ class ASpec(object):
                     #Fit a polynomial with order pol_order to the positions
                     #This polynomial determines how the pixel positions are converted to wavelengths for this row
                     polcoefs = np.polyfit(hodi_peak_positions, self.hodi_peaks, pol_order)
-
-                    #print("1st order:", polcoefs[0], np.polyval(self.spectral_fitting_polynomial_coefficients[fibernr]['1st order'], r))
-                    #print("0th order:", polcoefs[1], np.polyval(self.spectral_fitting_polynomial_coefficients[fibernr]['0th order'], r))
                     
                     t8 = time.time()
                     #print("Fitting the polynomial took", t8-t7, "secs")
@@ -309,7 +309,8 @@ class ASpec(object):
                     '''
                 else:
                               
-                    #Add the fitted wavelength positions of this row to the wavelengths that have been fitted for previous rows belonging to this fiber.    
+                    #Add the fitted wavelength positions of this row to the wavelengths that have been fitted for previous rows belonging to this fiber,
+                    #using the saved calibrated polynomials    
                     unsorted_wavelengths.append(self.convert_pixel_to_wavelength(fibernr, x, r))
     
                     #Add the pixel intensities of this row accordingly
@@ -346,7 +347,6 @@ class ASpec(object):
             #Add the binned wavelengths and intensities of this fiber to a dictionary for all fibers
             fitted_wavelengths_all_fibers[fibernr] = {'wavelengths':binned_wavelengths, 'intensities':bin_means}
 
- 
             '''
             for pwl in [347, 354, 361, 416, 444, 468, 482, 512, 522, 537, 575, 641, 732, 740, 794, 864]:
                 plt.vlines(pwl, 0, 300, linestyles='dashed', color=self.wavelength_to_rgb(pwl), alpha=0.33)
@@ -362,14 +362,12 @@ class ASpec(object):
                 plt.text(wl, 250, str('%.2f' % self.hodi_peaks[j]), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center') 
             '''
             
-
             #plt.savefig('unfolded_spectrum_fiber_'+str(i)+'_'+str(pol_order)+'_orders'+'.png')
             #plt.close()
 
         t13 = time.time()
         print("Analyzing spectrum took", t13-tfibers, "secs")
         #plt.show()
-
         
         return fitted_wavelengths_all_fibers  
 
@@ -406,25 +404,33 @@ class ASpec(object):
             mapping_columns = []
 
         
-            #Determine the 'central' rows of this fiber by taking the mean y-value of the 
+            #Determine the 'central' row of this fiber by taking the mean y-value of the peak positions on the y-axis
+            #This peak positions are determined from the polynomial curve that is fitted to each fiber
             mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
             
+            #The fibernumber is necessary to load the appropriate polynomial coefficients and as a key to store the fitted spectrum in the dictionary
             fibernr = self.fiber_number(mean_y_position_fiber)
             
             print("Fiber", fibernr)            
             
             #The median pixel values for every row that belongs to this fiber
             rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
-            print(rowmedians)
+
             #Determine between which rows the median pixel values are larger than the threshold
-            loweredge =min(np.nonzero(rowmedians > threshold)[0])
-            upperedge = max(np.nonzero(rowmedians > threshold)[0])
+            try:
+                loweredge =min(np.nonzero(rowmedians > threshold)[0])
+                upperedge = max(np.nonzero(rowmedians > threshold)[0])
+
+            except ValueError as e:
+                print(rowmedians)
+                raise Exception('Threshold value is too low') from e
 
             #Create an array with the rows over which to loop                        
             rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
             #rows = [np.int(mean_y_position_fiber)]
             print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
             
+            #Plot the rows between which the spectra are interpolated and stacked
             plt.hlines(mean_y_position_fiber, 0, self.nx, color = 'c0', linestyles='dashed')
             plt.hlines(rows[0], 0, self.nx, color='red', linestyles='dashed')
             plt.hlines(rows[-1], 0, self.nx, color='red', linestyles='dashed')
@@ -439,15 +445,8 @@ class ASpec(object):
                     #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
                     #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
                     #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
-                    #The routine finds for local maxima than the 5 absorption lines that we are looking for.
                     peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
-                    
-                    #mapped_row = ndimage.map_coordinates(image, [np.full(len(x),r), x], prefilter=False, order=5)
-                    
-                    #peak_positions = np.array(peakutils.indexes((255-mapped_row), thres=0.5, min_dist=60))
-                    
-                    
-                    
+                        
                     
                     '''
                     for p in peak_positions:
@@ -466,9 +465,8 @@ class ASpec(object):
                     t6 = time.time()
                     for wl in self.hodi_peaks:
                         #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
-                        #The found peak that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
+                        #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
                         peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
-                        #peak = self.find_nearest(enhanced_peaks, self.theoretical_position_on_detector(wl))
                         hodi_peak_positions.append(peak)
                         
                         
@@ -490,16 +488,15 @@ class ASpec(object):
                     
                     
                     #Convert the preset wavelengths to pixel positions (column = x-positions, row = y-positions)
-                    #Both are lists are equally long and the n-th entry of each list together give an x,y-position       
+                    #Both lists are equally long and the n-th entry of each list together give an x,y-position       
                     mapping_columns.append((wls_mapped_backwards - polcoefs[1])/polcoefs[0])
                     mapping_rows.append(np.full(len(wls_mapped_backwards),r))
 
 
                 else:
                  
-                    #Convert the preset wavelengths to pixel positions (column = x-positions, row = y-positions)
-                    #Both are lists are equally long and the n-th entry of each list together give an x,y-position
-                    
+                    #Convert the preset wavelengths to pixel positions (column = x-positions, row = y-positions) using the saved calibrated polynomials
+                    #Both lists are equally long and the n-th entry of each list together give an x,y-position 
                     mapping_columns.append(self.convert_wavelength_to_pixel(fibernr, wls_mapped_backwards, r))
                     mapping_rows.append(np.full(len(wls_mapped_backwards),r))
                 
@@ -520,7 +517,7 @@ class ASpec(object):
             #belonging to the same wavelength in different rows
             averaged_intensities = np.mean(interpolated_intensities.reshape(-1, len(wls_mapped_backwards)), axis=0)
                        
-            #Add the binned wavelengths and intensities of this fiber to a dictionary for all fibers
+            #Add the wavelengths and mapped, averaged intensities of this fiber to a dictionary for all fibers
             fitted_wavelengths_all_fibers[fibernr] = {'wavelengths':wls_mapped_backwards, 'intensities':averaged_intensities}
             print("Mapping backwards and saving took", time.time()-t10, "secs")     
                         
@@ -529,16 +526,10 @@ class ASpec(object):
 
 
 
-
     def determine_polynomial_coefficients(self, image, lower_margin=30, upper_margin=40, threshold=25, resolution=2, pol_order=2):
-        #Alternative routine to derive the spectrum of a single fiber. 
-        #First the fibers are separated on the sensor based on their stacked intensity along the y-axis.
-        #Then for each fiber, the average position of the peak intensity on the y-axis is taken as the central row.
-        #For each row between central row - lower_margin and central row + upper_margin, where the median pixelvalue is above the threshold value, 
-        #this routine fits a polynomial to the positions of the 5 calibrated peaks from the HoDi filter. 
-        #With this polynomial fit, the pixel x-positions can be mapped to wavelength and backwards. 
-        #Finally, the polynomial fit is used to map a preset array with wavelenghts to the pixel in each row that corresponds to that wavelength.
-        #The pixel intensities found this way are averaged for every wavelength in the preset array. 
+        #Routine to derive to derive a polynomial that fits the polynomial coefficients of each row for the whole sensor at once.
+        #NOT OPERATIONAL BECAUSE THE SMILE AND KEYSTONE ABERRATIONS ARE NOT CONTINUOUS! 
+        #This routine follows the backwards_spectral_fitting routine
     
         #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
         wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution, resolution)
@@ -557,15 +548,21 @@ class ASpec(object):
         tfibers = time.time()
         for i in range(self.n_fibers):
 
-            #Determine the 'central' rows of this fiber by taking the mean y-value of the 
+            #Determine the 'central' row of this fiber by taking the mean y-value of the peak positions on the y-axis
+            #This peak positions are determined from the polynomial curve that is fitted to each fiber
             mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
                         
             #The median pixel values for every row that belongs to this fiber
             rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
 
             #Determine between which rows the median pixel values are larger than the threshold
-            loweredge =min(np.nonzero(rowmedians > threshold)[0])
-            upperedge = max(np.nonzero(rowmedians > threshold)[0])
+            try:
+                loweredge =min(np.nonzero(rowmedians > threshold)[0])
+                upperedge = max(np.nonzero(rowmedians > threshold)[0])
+
+            except ValueError as e:
+                print(rowmedians)
+                raise Exception('Threshold value is too low') from e
 
             #Create an array with the rows over which to loop                        
             rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
@@ -578,7 +575,6 @@ class ASpec(object):
                 #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
                 #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
                 #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
-                #The routine finds for local maxima than the 5 absorption lines that we are looking for.
                 peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
                 
                     
@@ -589,7 +585,7 @@ class ASpec(object):
                 t6 = time.time()
                 for wl in self.hodi_peaks:
                     #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
-                    #The found peak that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
+                    #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
                     peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
                     hodi_peak_positions.append(peak)
                               
@@ -611,13 +607,15 @@ class ASpec(object):
          
             
             
-        #We need to flatten the pixel coordinates such that we have a 1-dimensional array for each fiber
+        
         t9 = time.time() 
         print("Looping over rows took", t9-trows, "secs")
-        coefficients_0thorder = np.array(coefficients_0thorder)#.flatten()
-        coefficients_1storder = np.array(coefficients_1storder)#.flatten()
+        #Convert the lists into arrays that we can work with
+        coefficients_0thorder = np.array(coefficients_0thorder)
+        coefficients_1storder = np.array(coefficients_1storder)
         fitted_rows = np.array(fitted_rows)
-            
+        
+        #Fit a polynomial to the 0th and 1st order coefficients of the whole sensor    
         self.polcoefs_0thorder = np.polyfit(fitted_rows, coefficients_0thorder, pol_order)          
         self.polcoefs_1storder = np.polyfit(fitted_rows, coefficients_1storder, pol_order) 
 
@@ -638,20 +636,15 @@ class ASpec(object):
         f.savefig(str(self.n_fibers)+'fitted_polynomial_coefficients.png')
         print("0th order coefficients ", self.polcoefs_0thorder)
         print("1st order coefficients ", self.polcoefs_1storder)
+        #Save the polynomial coefficients for the whole sensor
         np.savetxt('polynomial_coefficients.ini', (self.polcoefs_0thorder,self.polcoefs_1storder)) 
        
        
        
        
     def determine_polynomial_coefficients_per_fiber(self, image, lower_margin=30, upper_margin=40, threshold=25, resolution=2, pol_order=2):
-        #Alternative routine to derive the spectrum of a single fiber. 
-        #First the fibers are separated on the sensor based on their stacked intensity along the y-axis.
-        #Then for each fiber, the average position of the peak intensity on the y-axis is taken as the central row.
-        #For each row between central row - lower_margin and central row + upper_margin, where the median pixelvalue is above the threshold value, 
-        #this routine fits a polynomial to the positions of the 5 calibrated peaks from the HoDi filter. 
-        #With this polynomial fit, the pixel x-positions can be mapped to wavelength and backwards. 
-        #Finally, the polynomial fit is used to map a preset array with wavelenghts to the pixel in each row that corresponds to that wavelength.
-        #The pixel intensities found this way are averaged for every wavelength in the preset array. 
+        #Routine to derive to derive a polynomial that fits the polynomial coefficients of each row for each fiber separately
+        #This routine follows the backwards_spectral_fitting routine 
     
         #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
         wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution, resolution)
@@ -659,11 +652,9 @@ class ASpec(object):
         #Create an empty dictionary to which we add the fitted wavelengths and corresponding intensities for each fiber
         fitted_wavelengths_all_fibers = {}
     
-
         #Pixel position array (later used to convert to wavelength)
         x = np.arange(self.nx)
         
-    
 
         tfibers = time.time()
         for i in range(self.n_fibers):
@@ -672,15 +663,21 @@ class ASpec(object):
             coefficients_1storder = []
             fitted_rows = []                
 
-            #Determine the 'central' rows of this fiber by taking the mean y-value of the 
+            #Determine the 'central' row of this fiber by taking the mean y-value of the peak positions on the y-axis
+            #This peak positions are determined from the polynomial curve that is fitted to each fiber
             mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
             fibernr = self.fiber_number(mean_y_position_fiber)            
             #The median pixel values for every row that belongs to this fiber
             rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
 
             #Determine between which rows the median pixel values are larger than the threshold
-            loweredge =min(np.nonzero(rowmedians > threshold)[0])
-            upperedge = max(np.nonzero(rowmedians > threshold)[0])
+            try:
+                loweredge =min(np.nonzero(rowmedians > threshold)[0])
+                upperedge = max(np.nonzero(rowmedians > threshold)[0])
+
+            except ValueError as e:
+                print(rowmedians)
+                raise Exception('Threshold value is too low') from e
 
             #Create an array with the rows over which to loop                        
             rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
@@ -693,7 +690,6 @@ class ASpec(object):
                 #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
                 #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
                 #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
-                #The routine finds for local maxima than the 5 absorption lines that we are looking for.
                 peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
                 
                     
@@ -704,7 +700,7 @@ class ASpec(object):
                 t6 = time.time()
                 for wl in self.hodi_peaks:
                     #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
-                    #The found peak that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
+                    #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
                     peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
                     hodi_peak_positions.append(peak)
                               
@@ -718,7 +714,7 @@ class ASpec(object):
                 #This polynomial determines how the pixel positions are converted to wavelengths for this row
                 polcoefs = np.polyfit(hodi_peak_positions, self.hodi_peaks, 1)
                 
-                #Add the polynomial coefficients of this row to the arrays for the whole image              
+                #Add the polynomial coefficients of this row to the arrays for this fiber              
                 coefficients_0thorder.append(polcoefs[1])
                 coefficients_1storder.append(polcoefs[0])
                 fitted_rows.append(r)         
@@ -726,13 +722,14 @@ class ASpec(object):
          
             
             
-            #We need to flatten the pixel coordinates such that we have a 1-dimensional array for each fiber
+            #Convert the lists into arrays that we can work with
             t9 = time.time() 
             print("Looping over rows took", t9-trows, "secs")
-            coefficients_0thorder = np.array(coefficients_0thorder)#.flatten()
-            coefficients_1storder = np.array(coefficients_1storder)#.flatten()
+            coefficients_0thorder = np.array(coefficients_0thorder)
+            coefficients_1storder = np.array(coefficients_1storder)
             fitted_rows = np.array(fitted_rows)
-                
+            
+            #Fit a polynomial to the 0th and 1st order coefficients of this fiber                 
             polcoefs_0thorder = np.polyfit(fitted_rows, coefficients_0thorder, pol_order)          
             polcoefs_1storder = np.polyfit(fitted_rows, coefficients_1storder, pol_order) 
     
@@ -753,6 +750,7 @@ class ASpec(object):
             f.savefig('fitted_polynomial_coefficients_fiber_'+str(fibernr)+'.png')
             print("0th order coefficients ", polcoefs_0thorder)
             print("1st order coefficients ", polcoefs_1storder)
+            #Save the polynomial coefficients for this fiber
             np.savetxt("polynomial_coefficients_fiber"+str(fibernr)+".ini", (polcoefs_0thorder,polcoefs_1storder)) 
             
 
@@ -775,7 +773,6 @@ class ASpec(object):
         for i in range(self.n_fibers):
             
 
-            #Determine the 'central' rows of this fiber by taking the mean y-value of the 
             mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
             
             fibernr = self.fiber_number(mean_y_position_fiber)
@@ -787,10 +784,14 @@ class ASpec(object):
             
             #The median pixel values for every row that belongs to this fiber
             rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
-            print(rowmedians)
-            #Determine between which rows the median pixel values are larger than the threshold
-            loweredge =min(np.nonzero(rowmedians > threshold)[0])
-            upperedge = max(np.nonzero(rowmedians > threshold)[0])
+            #Determine between which rows the median pixel values are larger than the threshold          
+            try:
+                loweredge =min(np.nonzero(rowmedians > threshold)[0])
+                upperedge = max(np.nonzero(rowmedians > threshold)[0])
+
+            except ValueError as e:
+                print(rowmedians)
+                raise Exception('Threshold value is too low') from e
 
             #Create an array with the rows over which to loop                        
             rows = np.arange(np.int(mean_y_position_fiber-lower_margin+loweredge), np.int(mean_y_position_fiber-lower_margin+upperedge))
@@ -805,7 +806,6 @@ class ASpec(object):
                 #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
                 #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
                 #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
-                #The routine finds for local maxima than the 5 absorption lines that we are looking for.
                 peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
                         
                 
@@ -826,9 +826,8 @@ class ASpec(object):
                 t6 = time.time()
                 for wl in self.hodi_peaks:
                     #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
-                    #The found peak that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
+                    #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
                     peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
-                    #peak = self.find_nearest(enhanced_peaks, self.theoretical_position_on_detector(wl))
                     hodi_peak_positions.append(peak)
                     
                     
@@ -1063,7 +1062,10 @@ if __name__ in ("__main__","__plot__"):
         #Read the image from file and make sure that the pixels and their corresponding values are floats
         print("Reading in image...")
         t0 = time.time()
-        image_data = imread(args.file).astype(np.float32)
+        #image_data = imread(args.file).astype(np.float32)
+        image_data = imread('../Basler spectra/LaserDrivenLightSource/fiberguide/Climate chamber/20C/OrderFilter_HoDi_NIR_100000us.tiff').astype(np.float32)
+
+        
         t1 = time.time()
         print("took", t1-t0, "secs")
         analyze = ASpec(image=image_data)  
@@ -1099,7 +1101,7 @@ if __name__ in ("__main__","__plot__"):
         #for po in all_orders:
         #performance.append(analyze.spectral_fitting(image_data, binwidth=1, pol_order = po))
         
-        
+        '''
         pixelpos_dict = analyze.pixelpositions_of_peaks(image_data)
         #image_data2 = imread(file2).astype(np.float32)
         #analyze2 = ASpec(image=image_data2) 
@@ -1118,8 +1120,11 @@ if __name__ in ("__main__","__plot__"):
             
         
         '''
-        wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
-        wl_dict_backwards = analyze.backwards_spectral_fitting(image_data, resolution=1)
+        image_data2 = imread('../Basler spectra/LaserDrivenLightSource/fiberguide/Climate chamber/20C/OrderFilter_HoDi_NIR_125000us.tiff').astype(np.float32)        
+        analyze2 = ASpec(image=image_data2)         
+        #wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
+        wl_dict_backwards = analyze2.backwards_spectral_fitting(image_data2, resolution=1, threshold=1)
+        wl_dict = analyze.backwards_spectral_fitting(image_data, resolution=1, threshold=1)
         #analyze.determine_polynomial_coefficients_per_fiber(image_data)
         
         #print(performance)
@@ -1136,7 +1141,7 @@ if __name__ in ("__main__","__plot__"):
             peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bint_backwards), thres=0.25, min_dist=5))
             
             plt.plot(bwls, bint, label='Fiber '+str(f))
-            plt.plot(bwls_backwards, bint_backwards, label='Fiber '+str(f)+' (b)', linestyle='solid', color='black', alpha=0.5)
+            plt.plot(bwls_backwards, bint_backwards, label='Fiber '+str(f)+' (125)', linestyle='solid', color='black', alpha=0.5)
             
             for wl in [416, 444, 468, 482, 512, 522, 537, 575, 641, 732, 740, 794, 864]:#analyze.hodi_peaks:#
 
@@ -1152,7 +1157,7 @@ if __name__ in ("__main__","__plot__"):
         
         plt.legend(loc='best', fancybox=True, framealpha=0.5, frameon=False)    
         plt.show()        
-        ''' 
+        
             
                       
                     
