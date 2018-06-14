@@ -10,10 +10,15 @@ import sys
 import argparse
 import peakutils
 import time
+import astropy.stats as aps
 
 
 class ASpec(object):
-    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100.):
+    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100., temp=20):
+       
+       
+        self.temperature = temp
+       
        
         #number of pixels in the x-direction
         self.nx = nx
@@ -90,7 +95,7 @@ class ASpec(object):
 
     def theoretical_position_on_detector(self, wl):
         #returns the theoretically expected position on the sensor in terms of pixels
-        return (np.tan(self.exit_angle(wl))*self.f - self.p0)/self.pxl
+        return (np.tan(self.exit_angle(wl))*self.f - self.p0)/self.pxl + ((20-self.temperature)*1.3e3)/self.pxl
                         
 
     def find_nearest(self, array,value):
@@ -128,7 +133,7 @@ class ASpec(object):
             y = np.median(image[:, (i*width+x0):((i+1)*width+x0)], axis=1)
 
             #Determine the position of the peak in the cross section along the y-axis
-            ypos = np.array( peakutils.indexes(y, thres=0.25, min_dist=80) )
+            ypos = np.array( peakutils.indexes(y, thres=0.1, min_dist=80) )
             
             #The center (x-position) of the current bin
             xc = np.array( (i+0.5)*width + x0 )
@@ -136,14 +141,17 @@ class ASpec(object):
             
             plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
 
-            ypositions.append(ypos)
-            xcs.append(xc)
-            npeaks.append(len(ypos))
+            if len(ypos)>0:
+
+                ypositions.append(ypos)
+                xcs.append(xc)
+                npeaks.append(len(ypos))
 		
         
         #Take the median of npeaks to determine the number of fibers used. 
         #Sometimes the routine finds less or more peaks than the number of fibers, but mostly it identifies the right amount of peaks.
         #We therefore assume that the median returns the number of fibers used.
+        
         self.n_fibers = int(np.median(npeaks))
         
         print("Number of fibers = ", self.n_fibers)
@@ -387,11 +395,7 @@ class ASpec(object):
 
         #Create an empty dictionary to which we add the fitted wavelengths and corresponding intensities for each fiber
         fitted_wavelengths_all_fibers = {}
-    
-        #Polynomial coefficients for the curve fitted to each fiber    
-        #polynomial_coefficients = self.separate_fibers(image)
-        t5 = time.time()
-        print("Separating fibers took", t5-t4, "secs")
+
         #Pixel position array (later used to convert to wavelength)
         x = np.arange(self.nx)
   
@@ -432,10 +436,10 @@ class ASpec(object):
             
             #Plot the rows between which the spectra are interpolated and stacked
             plt.hlines(mean_y_position_fiber, 0, self.nx, color = 'c0', linestyles='dashed')
-            plt.hlines(rows[0], 0, self.nx, color='red', linestyles='dashed')
-            plt.hlines(rows[-1], 0, self.nx, color='red', linestyles='dashed')
             plt.hlines(int(mean_y_position_fiber)-lower_margin, 0, self.nx, color='yellow', linestyles='dashed')
             plt.hlines(int(mean_y_position_fiber)+upper_margin, 0, self.nx, color='yellow', linestyles='dashed')
+            plt.hlines(rows[0], 0, self.nx, color='red', linestyles='dashed')
+            plt.hlines(rows[-1], 0, self.nx, color='red', linestyles='dashed')
             trows = time.time()
             for r in rows:
                 
@@ -757,10 +761,16 @@ class ASpec(object):
 
 
 
-    def pixelpositions_of_peaks(self, image, lower_margin=30, upper_margin=40, threshold=25):
+    def pixelpositions_of_peaks(self, image, lower_margin=30, upper_margin=40, threshold=30):
         #Based on the spectral fitting routines, this routine returns the positions of the calibration peaks for each row. 
         #This routine can be used to determine the shift of the spectrum on the detector with changing temperature.
     
+
+        #Remove peaks part of a 'double' peak as they can cause confusion with wavelength shift as a function of temperature 
+        excluded_peaks = []#[444.2, 794.]
+        sorter = np.argsort(self.hodi_peaks)
+        indices_excluded_peaks = sorter[np.searchsorted(self.hodi_peaks, excluded_peaks, sorter=sorter)]       
+        
 
         #Create an empty dictionary to which we add the fitted wavelengths and corresponding intensities for each fiber
         peak_positions_all_fibers = {}
@@ -779,8 +789,11 @@ class ASpec(object):
             
             print("Fiber", fibernr)            
             
-            
-            peak_positions_all_fibers[fibernr] = []
+            #Create a nested dictionary in which we save the pixelpositions of the peaks and the corresponding wavelengths
+            peak_positions_all_fibers[fibernr] = {}
+            peak_positions_all_fibers[fibernr]['positions'] = []
+            peak_positions_all_fibers[fibernr]['wavelengths'] = np.delete(self.hodi_peaks, indices_excluded_peaks).copy()
+
             
             #The median pixel values for every row that belongs to this fiber
             rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
@@ -807,18 +820,16 @@ class ASpec(object):
                 #The peakutils.indexes is an existing python routine and returns the indeces of values corresponding to
                 #a local maximum (The indeces conveniently correspond to pixel position along the x-axis). 
                 peak_positions = np.array(peakutils.indexes((255-image[r,:]), thres=0.25, min_dist=60))
-                        
-                
+                '''  
+                if fibernr == 10:     
+                    for p in peak_positions:
+                        plt.vlines(p, 0, self.ny, linestyles='dashed', color='black', alpha=0.5)
+                        #plt.text(p, 100, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')
+                    
+                    #plt.plot(255-image_data[r,:])
+                    plt.plot(image[r,:])
                 '''
-                for p in peak_positions:
-                
-                    plt.vlines(p, 0, self.ny, linestyles='dashed', color='black', alpha=0.5)
-                    #plt.text(p, 100, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')
-                
-                #plt.plot(255-image_data[r,:])
-                plt.plot(image[r,:])
-                plt.plot(mapped_row, color='black', linestyle='dotted')
-                '''
+                    
                 #An empty array to which we add the subset of the 5 calibrated absorption lines from all absorption lines found  
                 hodi_peak_positions = []
             
@@ -827,19 +838,24 @@ class ASpec(object):
                 for wl in self.hodi_peaks:
                     #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
                     #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
-                    peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
-                    hodi_peak_positions.append(peak)
-                    
-                    
-                    #plt.vlines(peak, 0, self.ny, linestyles='dotted', color='blue', alpha=0.5)
-                    #plt.text(peak, 50, str(i), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')            
-
-            
-            
-                peak_positions_all_fibers[fibernr].append(hodi_peak_positions)
+                    #Remove peaks part of a 'double' peak as they can cause confusion with wavelength shift as a function of temperature 
+                    if wl not in excluded_peaks:
+                        peak = self.find_nearest(peak_positions, self.theoretical_position_on_detector(wl))
+                        hodi_peak_positions.append(peak)
+                        
+                        '''
+                        if fibernr == 10: 
+                            plt.vlines(peak, 0, self.ny, linestyles='dotted', color=self.wavelength_to_rgb(wl), alpha=0.5)
+                            plt.text(peak, 50, str(wl), style='italic', bbox={'facecolor':'white', 'alpha':0.5}, ha='center')
+                        '''       
+                '''
+                if fibernr == 10: 
+                    plt.show()            
+                '''
+                peak_positions_all_fibers[fibernr]['positions'].append(hodi_peak_positions)
                 
 
-            peak_positions_all_fibers[fibernr] = np.array(peak_positions_all_fibers[fibernr])
+            peak_positions_all_fibers[fibernr]['positions'] = np.array(peak_positions_all_fibers[fibernr]['positions'])
 
                         
         
@@ -1063,12 +1079,13 @@ if __name__ in ("__main__","__plot__"):
         print("Reading in image...")
         t0 = time.time()
         #image_data = imread(args.file).astype(np.float32)
-        image_data = imread('../Basler spectra/LaserDrivenLightSource/fiberguide/Climate chamber/20C/OrderFilter_HoDi_NIR_100000us.tiff').astype(np.float32)
+        image_data0 = imread('Fiberguide_stacked_HoDi_absorption_7fibers_0degrees.tiff').astype(np.float32)
 
         
         t1 = time.time()
         print("took", t1-t0, "secs")
-        analyze = ASpec(image=image_data)  
+        analyze0 = ASpec(image=image_data0)
+        '''
         #image_data_cont = imread("HDR_stacked_continuum.tiff").astype(np.float32)
         #image_data_hodi = imread("HDR_stacked_HoDi_absorption.tiff").astype(np.float32)
         #image_data = image_data_cont-image_data_hodi
@@ -1095,69 +1112,130 @@ if __name__ in ("__main__","__plot__"):
         plt.hlines(row, 0, 1920, linestyles='dotted', color='blue', alpha=0.33)
         plt.xlim(0,1920) 
         plt.ylim(0,1200)
-        #analyze.separate_fibers(image_data)
-        all_orders = np.arange(4)+1
-        performance = []
-        #for po in all_orders:
-        #performance.append(analyze.spectral_fitting(image_data, binwidth=1, pol_order = po))
+        '''
+        
+        
+        
+        image_data20 = imread('Fiberguide_stacked_HoDi_absorption_7fibers_20degrees.tiff').astype(np.float32)
+        analyze20 = ASpec(image=image_data20, temp=20) 
+        image_data50 = imread('Fiberguide_stacked_HoDi_absorption_7fibers_50degrees.tiff').astype(np.float32)
+        analyze50 = ASpec(image=image_data50, temp=50) 
+
+        pixelpos_dict0 = analyze0.pixelpositions_of_peaks(image_data0, threshold=10)
+        pixelpos_dict20 = analyze20.pixelpositions_of_peaks(image_data20)
+        pixelpos_dict50 = analyze50.pixelpositions_of_peaks(image_data50)
+        
+        plt.figure()
+        
+        for k in pixelpos_dict0.keys():
+            print(k)
+            
+            if k == 2:
+                #print(pixelpos_dict[k])
+                #print(np.mean(pixelpos_dict[k], axis=0))
+                
+                
+                mean0, median0, sigma0 = aps.sigma_clipped_stats(pixelpos_dict0[k]['positions'], axis=0)
+                mean20, median20, sigma20 = aps.sigma_clipped_stats(pixelpos_dict20[k]['positions'], axis=0)
+                mean50, median50, sigma50 = aps.sigma_clipped_stats(pixelpos_dict50[k]['positions'], axis=0)
+                
+                #diff = (np.mean(pixelpos_dict[k]['positions'], axis=0)- np.mean(pixelpos_dict2[k]['positions'], axis=0))*analyze.pxl
+                
+                diff20 = (mean20-mean0)*analyze0.pxl
+                diff50 = (mean50-mean0)*analyze0.pxl
+                
+                
+                sortwls = np.argsort(pixelpos_dict0[k]['wavelengths'])
+                
+                sorted_wls = pixelpos_dict0[k]['wavelengths'][sortwls]
+                
+                sorted_diff20 = diff20[sortwls]
+                sorted_diff50 = diff50[sortwls]
+                
+                diff0 = np.full(len(diff20),0)
+                
+                
+                for idx, val in enumerate(diff0):
+                
+                    plt.plot([0,20,50], np.array([val, diff20[idx], diff50[idx]])/1000., label=str(sorted_wls[idx]))
+        
+        
+        plt.xlabel('Degrees [C]')
+        plt.ylabel('shift [um]')
+        plt.legend(loc='best', fancybox=True, framealpha=0.5, frameon=False)      
+        plt.show()
+            
         
         '''
-        pixelpos_dict = analyze.pixelpositions_of_peaks(image_data)
-        #image_data2 = imread(file2).astype(np.float32)
-        #analyze2 = ASpec(image=image_data2) 
-        #pixelpos_dict2 = analyze2.pixelpositions_of_peaks(image_data2)
-        #plt.figure()
-        
+
         for k in pixelpos_dict.keys():
             print(k)
             #print(pixelpos_dict[k])
-            print(np.mean(pixelpos_dict[k], axis=0))
-            #diff = (np.mean(pixelpos_dict[k], axis=0)- np.mean(pixelpos_dict2[k], axis=0))*analyze.pxl
-            #print(diff, " nm")
-            #plt.plot(diff, k)
+            #print(np.mean(pixelpos_dict[k], axis=0))
             
-        #plt.show()
             
+            mean, median, sigma = aps.sigma_clipped_stats(pixelpos_dict[k]['positions'], axis=0)
+            mean2, median2, sigma2 = aps.sigma_clipped_stats(pixelpos_dict2[k]['positions'], axis=0)
+            
+            #diff = (np.mean(pixelpos_dict[k]['positions'], axis=0)- np.mean(pixelpos_dict2[k]['positions'], axis=0))*analyze.pxl
+            diff = (mean-mean2)*analyze.pxl
+            
+            print(diff, " nm")
+            #print(pixelpos_dict[k]['wavelengths'])
+            print('-------')
+            print(np.mean(pixelpos_dict[k]['positions'], axis=0))
+            print(np.mean(pixelpos_dict2[k]['positions'], axis=0))
+            if k in [9,10]:
+                print(pixelpos_dict[k]['positions'])
+                print(pixelpos_dict2[k]['positions'])
+            print('-------')
+            plt.plot(pixelpos_dict[k]['wavelengths'][np.argsort(pixelpos_dict[k]['wavelengths'])], diff[np.argsort(pixelpos_dict[k]['wavelengths'])]/1000., label='fiber'+str(k))
         
-        '''
-        image_data2 = imread('../Basler spectra/LaserDrivenLightSource/fiberguide/Climate chamber/20C/OrderFilter_HoDi_NIR_125000us.tiff').astype(np.float32)        
-        analyze2 = ASpec(image=image_data2)         
+        
+        plt.xlabel('wavelength [nm]')
+        plt.ylabel('shift [um]')
+        plt.legend(loc='best', fancybox=True, framealpha=0.5, frameon=False)      
+        plt.show()
+
+
+
+        #image_data2 = imread('../Basler spectra/LaserDrivenLightSource/fiberguide/Climate chamber/50C/check_vibration/OrderFilter_HoDi_VIS_5000us_4.tiff').astype(np.float32)        
+        #analyze2 = ASpec(image=image_data2)         
         #wl_dict = analyze.spectral_fitting(image_data, binwidth=1, pol_order = 1)
-        wl_dict_backwards = analyze2.backwards_spectral_fitting(image_data2, resolution=1, threshold=1)
-        wl_dict = analyze.backwards_spectral_fitting(image_data, resolution=1, threshold=1)
-        #analyze.determine_polynomial_coefficients_per_fiber(image_data)
+        wl_dict_20 = analyze.backwards_spectral_fitting(image_data, resolution=1, onthefly=True, threshold=15)
+        #wl_dict_50 = analyze2.backwards_spectral_fitting(image_data2, resolution=1)#, threshold=5)
+
         
-        #print(performance)
         tend = time.time()
         print("Total time taken", tend-tstart, "secs")
-        plt.show()
         plt.figure()
         
-        for f in wl_dict_backwards:
-            bwls = wl_dict[f]['wavelengths']
-            bint = wl_dict[f]['intensities']
-            bwls_backwards = wl_dict_backwards[f]['wavelengths']
-            bint_backwards = wl_dict_backwards[f]['intensities']            
-            peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bint_backwards), thres=0.25, min_dist=5))
+        for f in wl_dict_20:
+            bwls_20 = wl_dict_20[f]['wavelengths']
+            bint_20 = wl_dict_20[f]['intensities']
+            #bwls_50 = wl_dict_50[f]['wavelengths']
+            #bint_50 = wl_dict_50[f]['intensities']            
+            #peak_positions_fiber = np.array(peakutils.indexes(np.nan_to_num(255-bint_50), thres=0.25, min_dist=5))
             
-            plt.plot(bwls, bint, label='Fiber '+str(f))
-            plt.plot(bwls_backwards, bint_backwards, label='Fiber '+str(f)+' (125)', linestyle='solid', color='black', alpha=0.5)
+            plt.plot(bwls_20, bint_20, label='Fiber '+str(f)+' (20C)')
+            #plt.plot(bwls_50, bint_50, label='Fiber '+str(f)+' (50C)',color='black', linestyle='dashed', alpha=0.5)
             
-            for wl in [416, 444, 468, 482, 512, 522, 537, 575, 641, 732, 740, 794, 864]:#analyze.hodi_peaks:#
+            
+            for wl in analyze2.hodi_peaks:#[416, 444, 468, 482, 512, 522, 537, 575, 641, 732, 740, 794, 864]:#
 
-                wl_estimate = analyze.find_nearest(bwls_backwards[peak_positions_fiber], wl)
+                wl_estimate = analyze2.find_nearest(bwls_50[peak_positions_fiber], wl)
                 plt.vlines(wl, 0, 300, linestyles='dotted', color=analyze.wavelength_to_rgb(wl))                
                 plt.vlines(wl_estimate, 0, 300, linestyles='dashed', color='black', alpha=0.5)
-        
-          
+            
+
         for pwl in analyze.hodi_peaks:
             
             plt.vlines(pwl, 0, 300, linestyles='dotted', color='black', alpha=0.33)
-           
-        
+
+
         plt.legend(loc='best', fancybox=True, framealpha=0.5, frameon=False)    
         plt.show()        
-        
+        '''
             
                       
                     
