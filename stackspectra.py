@@ -9,8 +9,8 @@ def stack_spectra():
     #path = './Basler spectra/Only LED'
     #path = './Basler spectra/With lasers'
     #path = './Basler spectra/LaserDrivenLightSource/new'#/composite'
-    path = '../Basler spectra/LaserDrivenLightSource/fiberguide/7 fibers/'#Double fibers'
-    darkpath = '../Basler spectra/LaserDrivenLightSource/fiberguide/7 fibers/'#Double fibers/darks'
+    path = '../Basler spectra/LaserDrivenLightSource/fiberguide/Climate chamber/Check after acclimatisation/check 2/'#Double fibers'
+    darkpath = '../Basler spectra/LaserDrivenLightSource/fiberguide/Climate chamber/Check after acclimatisation/check 2/'#Double fibers/darks'
     #darkpath = './Basler spectra/LaserDrivenLightSource/new/darks'#/darks'
     #dark_files = get_filepaths(full_path, '.FIT', 'dark')
     #bias = make_master_dark(dark_files)
@@ -44,7 +44,7 @@ def stack_spectra():
     
     plt.imshow(stacked_data)	
     plt.show()
-    imsave('Fiberguide_stacked_HoDi_absorption_7fibers.tiff', stacked_data)
+    imsave('Fiberguide_stacked_HoDi_absorption_7fibers_acclimatised2.tiff', stacked_data)
 
 
 def make_master_dark(dark_files):
