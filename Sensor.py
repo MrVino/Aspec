@@ -15,7 +15,7 @@ from scipy.optimize import curve_fit
 
 
 class ASpec(object):
-    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100., temp=20):
+    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100., temp=20, lasers=False):
        
        
         self.temperature = temp
@@ -43,6 +43,11 @@ class ASpec(object):
         #Reference detector position (in nm)
         self.p0 = np.tan(self.exit_angle(lambda_min))*self.f
 
+        #Are we looking at the three emission lines of the lasers (lasers = True) or at a ('full') spectrum (lasers=False). 
+        #Used in the separate_fibers routine where we need to adjust the signal in the image for the lasers.
+        self.lasers = lasers
+
+
         #Set the peak positions of the calibration filter (DON'T FORGET TO CHANGE WHEN FILTER IS RECALIBRATED)
         self.LiquidCalibrationFilter()
         
@@ -52,13 +57,14 @@ class ASpec(object):
             self.connect_camera()
             for image_data in self.take_snapshots(1):
                 image = image_data
-        self.separate_fibers(image)
 
         #These values are used to identify each fiber based on its position on the detector
         #We assume that each fibers covers an equal number of rows specified by self.fiber_spacing.
         #The edge between two adjacent fibers is emperically determined.  
         self.fiber_spacing = 110 #rows
         self.fiber_edge_rows = np.arange(1150, 49, -self.fiber_spacing)
+
+        self.separate_fibers(image)
 
         #Open the files that contain the calibrated polynomial coefficients necessary for the spectral fitting of each fiber
         #Note that they are currently assumed to be in the same directory as from which this script is run.
@@ -109,8 +115,8 @@ class ASpec(object):
         #Identify the fiber number by the position of its brightest row on the detector
         return 10-np.argmax(np.isclose(self.fiber_edge_rows, mean_row, atol=(self.fiber_spacing-1)))
 
-    def separate_fibers(self, image, width=25):
-        #We stack the image along the x-axis in bins with a chosen width, taking the median pixel value for each y-position. 
+    def separate_fibers(self, image, width=100):
+        #We stack the image along the x-axis in bins with a chosen width, summing the pixel values along the x-axis in the bin for each y-position. 
         #For each bin, the peakutils package is used to find the peaks along the y-axis, with the assumption that each peak correspond to a fiber. 
         #The position of each peak is saved and used to determine the curvature of the spectrum of each fiber. 
         
@@ -128,59 +134,99 @@ class ASpec(object):
         #Empty array to add the number of peaks found
         npeaks = []
         
+        image_copy = image.copy()
+        if self.lasers == True:
+            #We set all values higher than two standard deviations above the mean to 1, and the rest to 0. 
+            #This makes it easier to separate the fibers in case we use the lasers for alignment (and only have three thin spectral lines in our image)
+            image_copy.setflags(write=1)
+            image_copy[image_copy<(np.mean(image)+2.*np.std(image))] = 0
+            image_copy[image_copy>(np.mean(image)+2.*np.std(image))] = 1
+        
+        
         for i in range(num_steps):
 
-            #The median pixel value (taken over the width) for each y-value
-            y = np.median(image[:, (i*width+x0):((i+1)*width+x0)], axis=1)
-
+            #Sum the pixel values over the binwidth (along the x-axis) for each y-value
+            y = np.sum(image_copy[:, (i*width+x0):((i+1)*width+x0)], axis=1).astype(float)
+            
             #Determine the position of the peak in the cross section along the y-axis
-            ypos = np.array( peakutils.indexes(y, thres=0.1, min_dist=80) )
+            ypos = np.array( peakutils.indexes(y, thres=0.1, min_dist=80, thres_abs=False) )
             
             #The center (x-position) of the current bin
             xc = np.array( (i+0.5)*width + x0 )
             
             
-            #plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
+            plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
 
             if len(ypos)>0:
 
                 ypositions.append(ypos)
                 xcs.append(xc)
                 npeaks.append(len(ypos))
+            
 		
-        
         #Sometimes the routine finds less or more peaks than the number of fibers, but mostly it identifies the right amount of peaks.        
         #We therefore assume that the value for npeaks that occurs most frequently is the actual number of fibers
         
         self.n_fibers = int(np.bincount(npeaks).argmax())
-        
         print("Number of fibers = ", self.n_fibers)
 
 	    #turn the lists into arrays that can be used by the polyfit routine        
         xcs = np.array(xcs)
         ypositions = np.array(ypositions)
-
+        
+        
         #If the number of peaks found corresponds to the number of fibers used,
         #then we use the positions to determine the curvature of each spectrum 
         indices_all_fibers_found = np.where(np.isclose(npeaks, self.n_fibers))
         
         xcs = xcs[indices_all_fibers_found]
+        ypositions_temp = ypositions[indices_all_fibers_found]
         ypositions = np.vstack(ypositions[indices_all_fibers_found])
         
+        
+        for j, p in enumerate(xcs):
+        
+            plt.plot(p*np.ones_like(ypositions_temp[j]), ypositions_temp[j], 'bo')
+        
+        
+        
         # Fit a low order polynomial to the positions
-        polcoefs = np.polyfit(xcs, ypositions, 3)
+        polcoefs = np.polyfit(xcs, ypositions, 1)
 		
+        
 		#Plot the found fits
         x = np.linspace(x0, x1, 101)
-        '''
+       
+        plt.imshow(image_copy, origin='lower', cmap='gist_gray',vmin=0, vmax=2)
         for i in range(self.n_fibers):
             y = np.polyval(polcoefs[:, i], x)	
             plt.plot(x, y, 'C0')
-        '''
+        
+        plt.xlim(0,self.nx)
+        plt.ylim(0, self.ny)
+        
 
+
+        x = np.arange(self.nx)
+        
+        self.used_fibers = []
+         
+        for i in range(self.n_fibers):
+        
+            #Determine the 'central' row of this fiber by taking the mean y-value of the peak positions on the y-axis
+            #This peak positions are determined from the polynomial curve that is fitted to each fiber
+            mean_y_position_fiber = np.mean(np.polyval(polcoefs[:, i], x))
+
+            fibernr = self.fiber_number(mean_y_position_fiber)
+            
+            self.used_fibers.append(fibernr)
+            
+            print(fibernr)
+
+        plt.show()
         self.fiber_positions_polynomial_coefficients = polcoefs
-
-
+        
+        
     def convert_pixel_to_wavelength(self, fibernr, pixels, row):
         #'polynomialception'
         #Use the saved polynomial coefficients to calculate, as a function of fiber and rownumber, the 0th and 1st order polynomial coefficients 
@@ -878,7 +924,9 @@ class ASpec(object):
         # Open camera and grep some images
         self.cam.open()
         
-        self.cam.properties['ExposureTime'] = 1000.#100000.0#
+        self.cam.properties['ExposureTime'] = 100000.#100000.0#
+        self.cam.properties['Gain'] = 5.0
+        self.cam.properties['PixelFormat'] = 'Mono12'
         
 
 
@@ -1066,6 +1114,11 @@ if __name__ in ("__main__","__plot__"):
         image_data_accl = imread('Fiberguide_stacked_HoDi_absorption_7fibers_acclimatised2.tiff').astype(np.float32)
         analyze_accl = ASpec(image=image_data_accl)         
         
+        
+        
+        #test = analyze_accl.determine_polynomial_coefficients_per_fiber(image_data_accl)
+        
+        #stop
         
         wl_dict = analyze.backwards_spectral_fitting(image_data, resolution=1)#, onthefly=True, threshold=15)
         wl_dict_accl = analyze_accl.backwards_spectral_fitting(image_data_accl, resolution=1)#, threshold=5)

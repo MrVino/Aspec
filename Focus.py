@@ -12,10 +12,11 @@ import peakutils
 import time
 import astropy.stats as aps
 from scipy.optimize import curve_fit
+from scipy.interpolate import UnivariateSpline
 from itertools import groupby
 
 class ASpec(object):
-    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100., temp=20):
+    def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100., temp=20, lasers=False):
        
        
         self.temperature = temp
@@ -43,6 +44,10 @@ class ASpec(object):
         #Reference detector position (in nm)
         self.p0 = np.tan(self.exit_angle(lambda_min))*self.f
 
+        #Are we looking at the three emission lines of the lasers (lasers = True) or at a ('full') spectrum (lasers=False). 
+        #Used in the separate_fibers routine where we need to adjust the signal in the image for the lasers.
+        self.lasers = lasers
+
         #Set the peak positions of the calibration filter (DON'T FORGET TO CHANGE WHEN FILTER IS RECALIBRATED)
         self.LiquidCalibrationFilter()
         
@@ -52,10 +57,7 @@ class ASpec(object):
             self.connect_camera()
             for image_data in self.take_snapshots(1):
                 image = image_data
-                
-        self.mean_pixel_value = np.mean(image)
-        self.std_pixel_value = np.std(image)
-              
+                              
 
         #These values are used to identify each fiber based on its position on the detector
         #We assume that each fibers covers an equal number of rows specified by self.fiber_spacing.
@@ -134,13 +136,13 @@ class ASpec(object):
         #Empty array to add the number of peaks found
         npeaks = []
         
-        
-        #We set all values higher than two standard deviations above the mean to 1, and the rest to 0. 
-        #This makes it easier to separate the fibers in case we use the lasers for alignment (and only have three thin spectral lines in our image)
         image_copy = image.copy()
-        image_copy.setflags(write=1)
-        image_copy[image_copy<(self.mean_pixel_value+2.*self.std_pixel_value)] = 0
-        image_copy[image_copy>(self.mean_pixel_value+2.*self.std_pixel_value)] = 1
+        if self.lasers == True:
+            #We set all values higher than two standard deviations above the mean to 1, and the rest to 0. 
+            #This makes it easier to separate the fibers in case we use the lasers for alignment (and only have three thin spectral lines in our image)
+            image_copy.setflags(write=1)
+            image_copy[image_copy<(np.mean(image)+2.*np.std(image))] = 0
+            image_copy[image_copy>(np.mean(image)+2.*np.std(image))] = 1
         
         
         for i in range(num_steps):
@@ -244,97 +246,60 @@ class ASpec(object):
         return  (wavelengths - np.polyval(self.spectral_fitting_polynomial_coefficients[fibernr]['0th order'], row))/np.polyval(self.spectral_fitting_polynomial_coefficients[fibernr]['1st order'], row)
 
 
-    def determine_peak_widths(self, fitted_wavelengths_all_fibers):
+
+
+    def determine_peak_widths(self, image, fitted_wavelengths_all_fibers):
 
        
         for fibernr in fitted_wavelengths_all_fibers.keys():
 
 
             print("Fiber", fibernr)
-              
+            #Determine the positions of the laser peaks
+            peak_positions = np.array(peakutils.indexes(fitted_wavelengths_all_fibers[fibernr]['intensities'], thres=0.1, min_dist=60))
+                        
+            
+            for pp in peak_positions:
+                print(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
+
+                #We fit a cubic spline to each laser emission peak - (peak_max/2) and the use its roots, i.e. where it's 0, to determine the positions
+                #that indicate the Full Width Half Maximum
+                spline = UnivariateSpline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20],fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])/2, s=0)
+                r1, r2 = spline.roots()
+                print(r1, r2)
+                print(r2-r1)
+                #print(spline)
 
 
-            boolean_yvalues = fitted_wavelengths_all_fibers[fibernr]['intensities'] > self.mean_pixel_value
-            grouped_booleans = np.array([list(g) for _, g in groupby(boolean_yvalues)])
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])
+                #plt.axvspan(r1, r2, facecolor='g', alpha=0.5)
+                #plt.show()
 
 
             
+            '''
+            
             if grouped_booleans.size== 7:
-                print(len(grouped_booleans[1]), len(grouped_booleans[3]), len(grouped_booleans[5]))
-                print(grouped_booleans)
+                #print(len(grouped_booleans[1]), len(grouped_booleans[3]), len(grouped_booleans[5]))
+                #print(grouped_booleans)
                 print(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0])-1], fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1])-1], "|", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2])-1], fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2]+grouped_booleans[3])-1], "|", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2]+grouped_booleans[3]+grouped_booleans[4])-1], fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2]+grouped_booleans[3]+grouped_booleans[4]+grouped_booleans[5])-1])
+                
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], smoothed_intensities, color='red')
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], fitted_wavelengths_all_fibers[fibernr]['intensities'])
+                plt.hlines(np.mean(image), 0, self.nx, color='yellow', linestyles='dashed')
+                plt.show()
+                
+                
             else:
+                print("Noisy background, more than 1 interval with values above the background")
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], smoothed_intensities, color='red')
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], fitted_wavelengths_all_fibers[fibernr]['intensities'])
+                plt.hlines(np.mean(image), 0, self.nx, color='yellow', linestyles='dashed')
+                plt.show()
                 sys.exit("Noisy background, more than 1 interval with values above the background")
+            
+            '''   
                 
-                
-
-
-
-
-
-
-    def determine_peak_widths_old(self, image, lower_margin=30, upper_margin=40):
-
-            
-        #Pixel position array (later used to convert to wavelength)
-        x = np.arange(self.nx)
-        
-        plt.imshow(image, origin='lower', cmap='gist_gray',vmin=0, vmax=4095)
-        
-        for i in range(self.n_fibers):
-
-
-            #Determine the 'central' row of this fiber by taking the mean y-value of the peak positions on the y-axis
-            #This peak positions are determined from the polynomial curve that is fitted to each fiber
-            mean_y_position_fiber = np.mean(np.polyval(self.fiber_positions_polynomial_coefficients[:, i], x))
-
-            fibernr = self.fiber_number(mean_y_position_fiber)
-            
-            print("Fiber", fibernr)
-              
-            #The median pixel values for every row that belongs to this fiber
-            rowmedians = np.mean(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
-
-            #Determine between which rows the median pixel values are larger than the threshold
-            try:
-                loweredge = min(np.nonzero(rowmedians > self.mean_pixel_value)[0])
-                upperedge = max(np.nonzero(rowmedians > self.mean_pixel_value)[0])
-
-            except ValueError as e:
-                print(rowmedians)
-                raise Exception('Threshold value is too low') from e
-
-            
-            
-            lowerlimit = np.int(mean_y_position_fiber-lower_margin+loweredge)
-            upperlimit = np.int(mean_y_position_fiber-lower_margin+upperedge)
-
-
-            plt.hlines(lowerlimit, 0, self.nx, color='yellow', linestyles='dashed')
-            plt.hlines(upperlimit, 0, self.nx, color='yellow', linestyles='dashed')            
-
-            #plt.figure()
-            #plt.plot(x, self.sum_columns(image[lowerlimit:upperlimit,:])/(upperedge-loweredge))
-            #plt.show()
-
-            yvalues = self.sum_columns(image[lowerlimit:upperlimit,:])/(upperedge-loweredge)
-            print(np.median(yvalues))
-            print(self.mean_pixel_value)
-            background = self.mean_pixel_value
-            boolean_yvalues = yvalues > background
-            grouped_booleans = np.array([list(g) for _, g in groupby(boolean_yvalues)])
-
-
-            
-            if grouped_booleans.size== 7:
-                print(len(grouped_booleans[1]), len(grouped_booleans[3]), len(grouped_booleans[5]))
-            else:
-                sys.exit("Noisy background, more than 1 interval with values above the background")
-                
-                
-
-            
-        plt.show()                 
 
 
 
@@ -347,6 +312,9 @@ class ASpec(object):
         #With this polynomial fit, the pixel x-positions can be mapped to wavelength and backwards. 
         #Finally, the polynomial fit is used to map a preset array with wavelenghts to the pixel in each row that corresponds to that wavelength.
         #The pixel intensities found this way are averaged for every wavelength in the preset array. 
+    
+    
+        print(np.max(image))
     
         #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
         wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution, resolution)
@@ -852,7 +820,7 @@ class ASpec(object):
         # Open camera and grep some images
         self.cam.open()
         
-        self.cam.properties['ExposureTime'] = 100000.#100000.0#
+        self.cam.properties['ExposureTime'] = 10000.#100000.0#
         self.cam.properties['Gain'] = 5.0
         self.cam.properties['PixelFormat'] = 'Mono12'
 
@@ -975,7 +943,7 @@ if __name__ in ("__main__","__plot__"):
         #To use this script with saved images, pypylon is not necessarily installed 
         import pypylon
         plt.style.use('dark_background')
-        analyze = ASpec()
+        analyze = ASpec(lasers=True)
         #analyze.camera_properties()
         peakwidths = {}
         
@@ -1006,8 +974,8 @@ if __name__ in ("__main__","__plot__"):
                     
                     
                     
-                    wl_int_dict = analyze.backwards_spectral_fitting(image_data)
-                    analyze.determine_peak_widths(wl_int_dict)
+                    wl_int_dict = analyze.backwards_spectral_fitting(image_data, resolution=1)
+                    analyze.determine_peak_widths(image_data, wl_int_dict)
             
             
             
