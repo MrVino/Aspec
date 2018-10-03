@@ -14,6 +14,11 @@ import astropy.stats as aps
 from scipy.optimize import curve_fit
 from scipy.interpolate import UnivariateSpline
 from itertools import groupby
+import pickle
+import os
+import imageio
+prop_cycle = plt.rcParams['axes.prop_cycle']
+colors = prop_cycle.by_key()['color']
 
 class ASpec(object):
     def __init__(self, image=None, lambda_min=350., nx=1920, ny=1200, pixelsize= 5.86, linesmm = 150, m=1, NA=0.1, grating_tilt_angle = 15., f=100., temp=20, lasers=False):
@@ -53,11 +58,12 @@ class ASpec(object):
         
         #Determine how many fibers are used. This sets the number of fibers, self.n_fibers, and the polynomial coefficients 
         #that belong to each fiber, self.fiber_positions_polynomial_coefficients.   
-        if image is None:
-            self.connect_camera()
+        #if image is None:
+        self.connect_camera()
+        '''
             for image_data in self.take_snapshots(1):
                 image = image_data
-                              
+        '''                      
 
         #These values are used to identify each fiber based on its position on the detector
         #We assume that each fibers covers an equal number of rows specified by self.fiber_spacing.
@@ -137,7 +143,7 @@ class ASpec(object):
         npeaks = []
         
         image_copy = image.copy()
-        if self.lasers == True:
+        if self.lasers is True:
             #We set all values higher than two standard deviations above the mean to 1, and the rest to 0. 
             #This makes it easier to separate the fibers in case we use the lasers for alignment (and only have three thin spectral lines in our image)
             image_copy.setflags(write=1)
@@ -151,13 +157,13 @@ class ASpec(object):
             y = np.sum(image_copy[:, (i*width+x0):((i+1)*width+x0)], axis=1).astype(float)
             
             #Determine the position of the peak in the cross section along the y-axis
-            ypos = np.array( peakutils.indexes(y, thres=0.1, min_dist=80, thres_abs=False) )
+            ypos = np.array( peakutils.indexes(y, thres=5, min_dist=80, thres_abs=True) )
             
             #The center (x-position) of the current bin
             xc = np.array( (i+0.5)*width + x0 )
             
             
-            #plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
+            plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
 
             if len(ypos)>0:
 
@@ -168,6 +174,9 @@ class ASpec(object):
 		
         #Sometimes the routine finds less or more peaks than the number of fibers, but mostly it identifies the right amount of peaks.        
         #We therefore assume that the value for npeaks that occurs most frequently is the actual number of fibers
+        
+        
+        print(npeaks)
         
         self.n_fibers = int(np.bincount(npeaks).argmax())
         print("Number of fibers = ", self.n_fibers)
@@ -185,17 +194,17 @@ class ASpec(object):
         ypositions_temp = ypositions[indices_all_fibers_found]
         ypositions = np.vstack(ypositions[indices_all_fibers_found])
         
-        '''
+        
         for j, p in enumerate(xcs):
         
             plt.plot(p*np.ones_like(ypositions_temp[j]), ypositions_temp[j], 'bo')
-        '''
+        
         
         
         # Fit a low order polynomial to the positions
         polcoefs = np.polyfit(xcs, ypositions, 1)
 		
-        '''
+        
 		#Plot the found fits
         x = np.linspace(x0, x1, 101)
        
@@ -206,7 +215,7 @@ class ASpec(object):
         
         plt.xlim(0,self.nx)
         plt.ylim(0, self.ny)
-        '''
+        
 
 
         x = np.arange(self.nx)
@@ -225,7 +234,7 @@ class ASpec(object):
             
             print(fibernr)
 
-        #plt.show()
+        plt.show()
         self.fiber_positions_polynomial_coefficients = polcoefs
 
 
@@ -248,7 +257,7 @@ class ASpec(object):
 
 
 
-    def determine_peak_widths(self, image, fitted_wavelengths_all_fibers):
+    def determine_peak_widths(self, fitted_wavelengths_all_fibers, peakwidthdictionary):
 
        
         for fibernr in fitted_wavelengths_all_fibers.keys():
@@ -257,48 +266,54 @@ class ASpec(object):
             print("Fiber", fibernr)
             #Determine the positions of the laser peaks
             peak_positions = np.array(peakutils.indexes(fitted_wavelengths_all_fibers[fibernr]['intensities'], thres=0.1, min_dist=60))
-                        
+            base = peakutils.baseline(fitted_wavelengths_all_fibers[fibernr]['intensities'], 7)
+
+         
             
             for pp in peak_positions:
-                print(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
+                print("peak = ", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
+                
+                laserwl = self.find_nearest(np.fromiter(peakwidthdictionary[fibernr].keys(), dtype=int), fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
 
-                #We fit a cubic spline to each laser emission peak - (peak_max/2) and the use its roots, i.e. where it's 0, to determine the positions
-                #that indicate the Full Width Half Maximum
-                spline = UnivariateSpline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20],fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])/2, s=0)
-                r1, r2 = spline.roots()
-                print(r1, r2)
-                print(r2-r1)
-                #print(spline)
+                halfmaximumbaseline = np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])/2 - base[pp-20:pp+20]/2
 
+              
+                
 
+                #We fit a cubic spline to each laser emission peak - (peak_max/2) and then use its roots, i.e. where it's 0, to determine the positions
+                #that indicate the Full Width Half Maximum (https://stackoverflow.com/questions/10582795/finding-the-full-width-half-maximum-of-a-peak)
+                spline = UnivariateSpline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20],fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-halfmaximumbaseline, s=0)
+                print("Spline roots = ", spline.roots())
+                splineroots = spline.roots()
+                
+                
                 #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])
-                #plt.axvspan(r1, r2, facecolor='g', alpha=0.5)
-                #plt.show()
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], spline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20])+halfmaximumbaseline, linestyle='dashed')
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], base[pp-20:pp+20], label='base')
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], halfmaximumbaseline, label='base')
+
+                #plt.vlines(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 0, np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]), linestyles='dotted', color='white')  
+                
+                #plt.vlines(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 0, np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]), linestyles='dotted')
+                #plt.hlines(np.max(halfmaximumbaseline), splineroots[-1], splineroots[0], linestyles='dashed', color='white')
+                #plt.legend()
+                #plt.show()  
+  
 
 
-            
-            '''
-            
-            if grouped_booleans.size== 7:
-                #print(len(grouped_booleans[1]), len(grouped_booleans[3]), len(grouped_booleans[5]))
-                #print(grouped_booleans)
-                print(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0])-1], fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1])-1], "|", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2])-1], fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2]+grouped_booleans[3])-1], "|", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2]+grouped_booleans[3]+grouped_booleans[4])-1], fitted_wavelengths_all_fibers[fibernr]['wavelengths'][len(grouped_booleans[0]+grouped_booleans[1]+grouped_booleans[2]+grouped_booleans[3]+grouped_booleans[4]+grouped_booleans[5])-1])
+
                 
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], smoothed_intensities, color='red')
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], fitted_wavelengths_all_fibers[fibernr]['intensities'])
-                plt.hlines(np.mean(image), 0, self.nx, color='yellow', linestyles='dashed')
-                plt.show()
+
+
+  
                 
+                peakwidthdictionary[fibernr][laserwl].append(splineroots[-1]-splineroots[0])
                 
-            else:
-                print("Noisy background, more than 1 interval with values above the background")
-                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], smoothed_intensities, color='red')
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], fitted_wavelengths_all_fibers[fibernr]['intensities'])
-                plt.hlines(np.mean(image), 0, self.nx, color='yellow', linestyles='dashed')
-                plt.show()
-                sys.exit("Noisy background, more than 1 interval with values above the background")
-            
-            '''   
+
+
+
+
+                
                 
 
 
@@ -820,7 +835,7 @@ class ASpec(object):
         # Open camera and grep some images
         self.cam.open()
         
-        self.cam.properties['ExposureTime'] = 10000.#100000.0#
+        self.cam.properties['ExposureTime'] = 100000.#100000.0#
         self.cam.properties['Gain'] = 5.0
         self.cam.properties['PixelFormat'] = 'Mono12'
 
@@ -906,6 +921,7 @@ class ASpec(object):
 
 if __name__ in ("__main__","__plot__"):
     
+    #fileDir = os.path.dirname(os.path.realpath('__file__'))
     
     parser = argparse.ArgumentParser(description='Choose in which mode you want to use the script')
 
@@ -916,7 +932,7 @@ if __name__ in ("__main__","__plot__"):
                         help="Captures a live feed from the camera, instead of reading a saved image")
     parser.add_argument("--file", 
                       dest="file", 
-                      default = 'Fiberguide_stacked_HoDi_absorption_7fibers.tiff',
+                      default = '7fibers_3lasers_250000us_gain_NE10filter.tiff',
                       help="The captured image that you want to plot")
     parser.add_argument("-n", 
                       dest="n_fibers", 
@@ -942,8 +958,9 @@ if __name__ in ("__main__","__plot__"):
         #if one chooses to run this script 'live', then pypylon must be installed and can be imported.
         #To use this script with saved images, pypylon is not necessarily installed 
         import pypylon
+        image_data = imread('ClimateChamberT20_pos2500.tiff').astype(np.float32)    
         plt.style.use('dark_background')
-        analyze = ASpec(lasers=True)
+        analyze = ASpec(image=image_data, lasers=True)
         #analyze.camera_properties()
         peakwidths = {}
         
@@ -956,7 +973,7 @@ if __name__ in ("__main__","__plot__"):
                 for f in analyze.used_fibers:
                     print(f)
                     peakwidths[temp]['positions'] = []
-                    peakwidths[temp][f] = {'402nm':[], '637nm':[], '856nm':[]}
+                    peakwidths[temp][f] = {402:[], 637:[], 856:[]}
                 
                 break
             except ValueError:
@@ -968,19 +985,85 @@ if __name__ in ("__main__","__plot__"):
         
             while True:
             
-                translation = float(input("Give the position (in mm): "))
+                
+                inp = input("Give the position (in um), type 'p' for plot, or any other non-numeric key to exit: ")
+                
+                
+                if inp == 'p':
+    
+                    f, axarr = plt.subplots(3, sharex=True, figsize=(8,4))
+                    f2, axarr2 = plt.subplots(len(analyze.used_fibers), sharex=True, figsize=(10,len(analyze.used_fibers)*3))
+                    
+                    f.suptitle(r"T = "+str(temp)+"$^\circ$C")
+                    f2.suptitle(r"T = "+str(temp)+"$^\circ$C")
+                    
+                    axarr[0].set_title('420 nm')
+                    axarr[1].set_title('637 nm')
+                    axarr[2].set_title('856 nm')
+            
+                            
+                    for fiber_index, fibernr in enumerate(sorted(analyze.used_fibers)):
+                    
+                        axarr2[fiber_index].set_title('Fiber '+str(fibernr))
+                        
+                        for wl in sorted(peakwidths[temp][fibernr].keys()):
+            
+                            if wl == 402:
+                                pi = 0
+                            elif wl == 637:
+                                pi = 1
+                            elif wl == 856:
+                                pi = 2
+            
+            
+                            #We sort the position array in case we have done additional measurements, for example around a found minimum.
+                            pos_sorting_indices = np.argsort(peakwidths[temp]['positions'])
+                            
+                            sorted_positions = np.array(peakwidths[temp]['positions'])[pos_sorting_indices]
+                            sorted_wavelengths = np.array(peakwidths[temp][fibernr][wl])[pos_sorting_indices]
+                            
+                            axarr[pi].plot(sorted_positions, sorted_wavelengths, label = "Fiber "+str(fibernr), color=colors[fibernr-1])
+                            axarr2[fiber_index].plot(sorted_positions, sorted_wavelengths, label = str(wl)+' nm', color=colors[pi**2+2*pi])
+                            
+            
+            
+                    axarr[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
+                    axarr2[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
+                    
+                    axarr[1].set_ylabel(r'$\mathrm{peakwidth\, [nm]}$')
+                    axarr2[int(len(analyze.used_fibers)/2)].set_ylabel(r'$\mathrm{peakwidth\, [nm]}$')
+                        
+                    axarr[2].set_xlabel(r'$\mathrm{translation\, [um]}$')
+                    
+                    plt.show()
+                    
+                    continue                
+                
+                
+                
+                translation = float(inp)
+                
+                peakwidths[temp]['positions'].append(translation)
                 
                 for image_data in analyze.take_snapshots(1):
-                    
-                    
-                    
+                    imageio.imsave('../Basler spectra/Lasers/Climate chamber/ClimateChamberT'+str(temp)+'_pos'+str(inp)+'.tiff', image_data*16)#.astype(np.uint16)        
                     wl_int_dict = analyze.backwards_spectral_fitting(image_data, resolution=1)
-                    analyze.determine_peak_widths(image_data, wl_int_dict)
+                    analyze.determine_peak_widths(wl_int_dict, peakwidths[temp])
+                    #filename = os.path.join(fileDir, '..\\"Basler spectra"\\"Climate chamber"\\ClimateChamberT'+str(temp)+'_pos'+str(inp)+'.tiff')
+                    #imsave(filename, image_data)
+                    
+                    
+                    
+                    
+                    
+                    
+                pickle.dump(peakwidths, open( 'laser_peak_widths_T'+str(temp)+'.p', "wb" ) )
             
             
             
             
-        except ValueError:
+        except ValueError as e:
+            print(e)
             sys.exit("That's it, I'm done")
 
 
@@ -996,10 +1079,71 @@ if __name__ in ("__main__","__plot__"):
 
         image_data = imread(args.file).astype(np.float32)
         
-        analyze = ASpec(image=image_data) 
-            
-        wl_dict = analyze.determine_peak_widths(image_data)#, resolution=1)#, onthefly=True, threshold=15)
+        analyze = ASpec(image=image_data, lasers=True)
+        
+        temp = 20
+        peakwidths = {temp:{}}
 
+        peakwidths[temp]['positions'] = []
+
+        peakwidths[temp]['positions'].append(2)
+
+
+        
+        #peakwidths[temp] = {}
+                
+        for f in analyze.used_fibers:
+            print(f)
+            peakwidths[temp][f] = {402:[], 637:[], 856:[]}
+            
+        wl_dict = analyze.backwards_spectral_fitting(image_data, resolution=1)
+        
+        print(peakwidths[temp])
+        
+        analyze.determine_peak_widths(wl_dict, peakwidths[temp])#, resolution=1)#, onthefly=True, threshold=15)
+        
+        
+        print("----------")
+        print(peakwidths[temp])
+
+        f, axarr = plt.subplots(3, sharex=True, figsize=(10,6))
+        f2, axarr2 = plt.subplots(len(analyze.used_fibers), sharex=True, figsize=(10,len(analyze.used_fibers)*3))
+        
+        f.suptitle(r"T = "+str(temp)+"$^\circ$C")
+        f2.suptitle(r"T = "+str(temp)+"$^\circ$C")
+        
+        axarr[0].set_title('420 nm')
+        axarr[1].set_title('637 nm')
+        axarr[2].set_title('856 nm')
+
+                
+        for fiber_index, fibernr in enumerate(sorted(analyze.used_fibers)):
+        
+            axarr2[fiber_index].set_title('Fiber '+str(fibernr))
+            
+            for wl in sorted(peakwidths[temp][fibernr].keys()):
+
+                if wl == 402:
+                    pi = 0
+                elif wl == 637:
+                    pi = 1
+                elif wl == 856:
+                    pi = 2
+
+                axarr[pi].scatter(peakwidths[temp]['positions'], peakwidths[temp][fibernr][wl], label = "Fiber "+str(fibernr), color=colors[fibernr-1])
+                axarr2[fiber_index].scatter(peakwidths[temp]['positions'], peakwidths[temp][fibernr][wl], label = str(wl)+' nm', color=colors[pi**2+2*pi])
+                
+
+
+        axarr[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
+        axarr2[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
+        
+        axarr[1].set_ylabel(r'$\mathrm{peakwidth\, [nm]}$')
+        axarr2[int(len(analyze.used_fibers)/2)].set_ylabel(r'$\mathrm{peakwidth\, [nm]}$')
+            
+        axarr[2].set_xlabel(r'$\mathrm{translation\, [mm]}$')
+        
+        plt.show()
                 
                       
                     
