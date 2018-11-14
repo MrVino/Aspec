@@ -133,7 +133,11 @@ plt.legend(loc='best', fancybox=True, framealpha=0.5, frameon=False)
 
 for i in [0,1]:
     print(polcoefs_402[i], polcoefs_637[i], polcoefs_856[i])    
-    
+
+
+plt.ylabel(r'$\mathrm{Actuator\,position\, [}\mu \mathrm{m]}$')
+
+plt.xlabel(r'$\mathrm{Temperature\, [}^{\circ}\mathrm{C]}$')
 plt.show()    
 laser_peak_positions = [402, 637, 856]
 

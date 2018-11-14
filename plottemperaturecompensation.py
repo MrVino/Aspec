@@ -19,8 +19,8 @@ prop_cycle = plt.rcParams['axes.prop_cycle']
 colors = prop_cycle.by_key()['color']
 
 
-peakwidths = pickle.load( open( "laser_peak_widths_T0_final.p", "rb" ) )
-
+#peakwidths = pickle.load( open( "laser_peak_widths_T0_final.p", "rb" ) )
+peakwidths = pickle.load( open( "laser_peak_widths_T0_16bit_0-40.p", "rb" ) )
 #peakwidths = pickle.load( open( "laser_peak_widths_T20_translation_tilt7.5.p", "rb" ) )
 #peakwidths2 = pickle.load( open( "laser_peak_widths_T20_translation_tilt7.5_part2-900--1500.p", "rb" ) )
 #peakwidths3 = pickle.load( open( "laser_peak_widths_T20_translation_tilt7.5_part3_300-1000.p", "rb" ) )
@@ -29,6 +29,29 @@ peakwidths = pickle.load( open( "laser_peak_widths_T0_final.p", "rb" ) )
 temp = 0
 used_fibers = [1,2,4,5,6,9,10]
 
+
+
+for t in [temp]:
+
+    indices = np.where(np.asarray(peakwidths[t]['positions'])>3500)[0]
+    
+    for fibernr in sorted(list(set(peakwidths[t].keys()).difference(set(['positions'])))):
+        #print(indices)
+        
+        for wl in sorted(peakwidths[t][fibernr].keys()):
+ 
+            #print(len(peakwidths[t][fibernr][wl]))
+            #print(peakwidths[t][fibernr][wl])        
+            peakwidths[t][fibernr][wl] = np.delete(np.array(peakwidths[t][fibernr][wl]), indices)
+ 
+
+            #print(len(peakwidths[t][fibernr][wl]))
+            #print(peakwidths[t][fibernr][wl])
+            
+
+            
+    peakwidths[t]['positions'] = np.delete(np.array(peakwidths[t]['positions']), indices)
+    print(t, peakwidths[t]['positions'])
 
 
 
@@ -107,31 +130,31 @@ for fiber_index, fibernr in enumerate(sorted(used_fibers)):
         if wl == 402:
             pi = 0
 
-            if len(likelyroots)==1:
+            #if len(likelyroots)==1:
             
-                optima402.append(likelyroots)
+            optima402.append(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))])
             
         elif wl == 637:
             pi = 1
  
-            if len(likelyroots)==1:
+            #if len(likelyroots)==1:
             
-                optima637.append(likelyroots)           
+            optima637.append(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))])           
             
         elif wl == 856:
 
-            if len(likelyroots)==1:
+            #if len(likelyroots)==1:
             
-                optima856.append(likelyroots)
+            optima856.append(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))])
 
             pi = 2
 
         axarr[pi].plot(sorted_positions, sorted_wavelengths, label = "Fiber "+str(fibernr), color=colors[fibernr-1])
         axarr[pi].plot(x, np.polyval(polcoefs, x), linestyle='dashed', color='black')
         
-        if len(likelyroots)==1:
+        #if len(likelyroots)==1:
         
-            axarr[pi].vlines(likelyroots, 0, 10, linestyle='dotted', color='black')
+        axarr[pi].vlines(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))], 0, 10, linestyle='dotted', color='black')
             #print(likelyroots)
         #axarr[pi].plot(x, np.polyval(polcoefs4, x), linestyle='dashed', label='O(4)')
         #axarr[pi].plot(x, np.polyval(polcoefs6, x), linestyle='dashed', label='O(6)')
@@ -193,24 +216,23 @@ print(likelyroot_637, np.mean(optima637))
 print(likelyroot_856, np.mean(optima856))
 
 
-axarr[0].plot(x, np.polyval(polcoefs_402, x), linestyle='dashed', color='yellow')
-axarr[1].plot(x, np.polyval(polcoefs_637, x), linestyle='dashed', color='yellow')
-axarr[2].plot(x, np.polyval(polcoefs_856, x), linestyle='dashed', color='yellow')
+#axarr[0].plot(x, np.polyval(polcoefs_402, x), linestyle='dashed', color='yellow')
+#axarr[1].plot(x, np.polyval(polcoefs_637, x), linestyle='dashed', color='yellow')
+#axarr[2].plot(x, np.polyval(polcoefs_856, x), linestyle='dashed', color='yellow')
 
 
-axarr[0].plot(sorted_positions, sorted_averages_402, label = "Averaged", color='blue', linestyle='dotted')
-axarr[1].plot(sorted_positions, sorted_averages_637, label = "Averaged", color='blue', linestyle='dotted')
-axarr[2].plot(sorted_positions, sorted_averages_856, label = "Averaged", color='blue', linestyle='dotted')
+#axarr[0].plot(sorted_positions, sorted_averages_402, label = "Averaged", color='blue', linestyle='dashed')
+#axarr[1].plot(sorted_positions, sorted_averages_637, label = "Averaged", color='blue', linestyle='dashed')
+#axarr[2].plot(sorted_positions, sorted_averages_856, label = "Averaged", color='blue', linestyle='dashed')
 
 axarr[0].vlines(np.mean(optima402), 0, 10, linestyle='dotted', color='red')
 axarr[1].vlines(np.mean(optima637), 0, 10, linestyle='dotted', color='red')
 axarr[2].vlines(np.mean(optima856), 0, 10, linestyle='dotted', color='red')
 
 
-
-axarr[0].vlines(likelyroot_402, 0, 10, linestyle='dotted', color='blue')
-axarr[1].vlines(likelyroot_637, 0, 10, linestyle='dotted', color='blue')
-axarr[2].vlines(likelyroot_856, 0, 10, linestyle='dotted', color='blue')
+#axarr[0].vlines(likelyroot_402, 0, 10, linestyle='dotted', color='blue')
+#axarr[1].vlines(likelyroot_637, 0, 10, linestyle='dotted', color='blue')
+#axarr[2].vlines(likelyroot_856, 0, 10, linestyle='dotted', color='blue')
 
 
 axarr[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
@@ -219,6 +241,7 @@ axarr2[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
 axarr[1].set_ylabel(r'$\mathrm{peakwidth\, [nm]}$')
 axarr2[int(len(used_fibers)/2)].set_ylabel(r'$\mathrm{peakwidth\, [nm]}$')
     
-axarr[2].set_xlabel(r'$\mathrm{translation\, [um]}$')
+axarr[2].set_xlabel(r'$\mathrm{Actuator\,position\, [}\mu \mathrm{m]}$')
+
 
 plt.show()

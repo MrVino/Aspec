@@ -887,9 +887,9 @@ class ASpec(object):
             d = np.min(collapsed_fiber)
             
             print(d)
-            #plt.plot(collapsed_fiber)
-            '''
+
             
+            '''
             plt.plot(collapsed_fiber)
             
             for pp in fitpeaks:
@@ -906,9 +906,9 @@ class ASpec(object):
                 for cpp in collapsed_peak_positions:
                 
                     #plt.plot(x[cpp-20:cpp+20], collapsed_fiber[cpp-20:cpp+20])
-                    
+                    #plt.show()
                 
-                    popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), x[cpp-20:cpp+20], collapsed_fiber[cpp-20:cpp+20], p0=[(2.*np.pi)**(-0.5), cpp, 1])
+                    popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), x[cpp-20:cpp+20], collapsed_fiber[cpp-20:cpp+20], p0=[np.max(collapsed_fiber[cpp-20:cpp+20]), cpp, 1])
                                                 
     
                     # Generate y-data based on the fit.
@@ -979,7 +979,7 @@ class ASpec(object):
                             #Remove peaks part of a 'double' peak as they can cause confusion with wavelength shift as a function of temperature 
                             
                             if self.lasers is True:
-                                popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), x[peak-20:peak+20], image[r,peak-20:peak+20], p0=[(2.*np.pi)**(-0.5), peak, 1])
+                                popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), x[peak-20:peak+20], image[r,peak-20:peak+20], p0=[np.max(image[r,peak-20:peak+20]), peak, 1])
                                 fit_peak_positions.append(popt[1])
                             else: 
                                 fit_peak_positions.append(peak)
@@ -1059,12 +1059,14 @@ class ASpec(object):
                 
                 for cpp in collapsed_peak_positions:
                 
-                    popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), binned_positions[cpp-20:cpp+20], bin_sums[cpp-20:cpp+20], p0=[(2.*np.pi)**(-0.5), cpp, 1])
+                    popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), binned_positions[cpp-20:cpp+20], bin_sums[cpp-20:cpp+20], p0=[np.max(bin_sums[cpp-20:cpp+20]), cpp, 1])
     
     
                     # Generate y-data based on the fit.
+                    #plt.plot(binned_positions[cpp-20:cpp+20], bin_sums[cpp-20:cpp+20])
                     #plt.plot(binned_positions[cpp-20:cpp+20], self.Gaussian(binned_positions[cpp-20:cpp+20], *popt, d))
                     #plt.vlines(popt[1], 0, self.Gaussian(popt[1], *popt, d), linestyles='dotted', color='black')            
+                    #plt.show()
                     #fiber_averaged_peak_positions.append(popt[1])
     
                     #plt.scatter(popt[1],mean_y_position_fiber)
@@ -1357,7 +1359,7 @@ if __name__ in ("__main__","__plot__"):
                         #Update the data stored in the previous image and line
                         #This saves memory space and the previous values are overwritten
                         h.set_data(new_image)
-                        line.set_ydata(new_image[row,:])
+                        line.set_ydata(new_image[row,:]/16)
                         plt.pause(0.01)
             
             except KeyboardInterrupt:

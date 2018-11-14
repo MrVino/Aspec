@@ -71,7 +71,7 @@ class ASpec(object):
         self.fiber_spacing = 110 #rows
         self.fiber_edge_rows = np.arange(1150, 49, -self.fiber_spacing)
 
-
+        print("Separating fibers")
         self.separate_fibers(image)
 
         #Open the files that contain the calibrated polynomial coefficients necessary for the spectral fitting of each fiber
@@ -90,6 +90,14 @@ class ASpec(object):
             #and the values are the calibrated polynomial coefficients that are necesarry to determine them
             self.spectral_fitting_polynomial_coefficients[fibernr]['0th order'] =  np.loadtxt(f)[0]
             self.spectral_fitting_polynomial_coefficients[fibernr]['1st order'] =  np.loadtxt(f)[1]
+
+
+    def Gaussian(self, x, a, b, c, d):
+        
+        y = a*np.exp(-np.power((x - b), 2.)/(2. * c**2.)) + d
+        
+        return y
+
 
 
     def LiquidCalibrationFilter(self):
@@ -271,7 +279,7 @@ class ASpec(object):
          
             
             for pp in peak_positions:
-                print("peak = ", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
+                #print("peak = ", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
                 
                 laserwl = self.find_nearest(np.fromiter(peakwidthdictionary[fibernr].keys(), dtype=int), fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
 
@@ -283,12 +291,22 @@ class ASpec(object):
                 #We fit a cubic spline to each laser emission peak - (peak_max/2) and then use its roots, i.e. where it's 0, to determine the positions
                 #that indicate the Full Width Half Maximum (https://stackoverflow.com/questions/10582795/finding-the-full-width-half-maximum-of-a-peak)
                 spline = UnivariateSpline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20],fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-halfmaximumbaseline, s=0)
-                print("Spline roots = ", spline.roots())
+                #print("Spline roots = ", spline.roots())
                 splineroots = spline.roots()
                 
+                d = np.mean(base[pp-20:pp+20])
+                popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-base[pp-20:pp+20], p0=[np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-base[pp-20:pp+20]), fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 1])
+                                            
+                #print("FWHM, from Gaussian = ",popt[2]*2*np.sqrt(2*np.log(2)), 2.355*popt[2], ", from spline is = ", splineroots[-1]-splineroots[0])
                 
-                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])
-                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], spline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20])+halfmaximumbaseline, linestyle='dashed')
+                
+                
+                
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], spline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20])+halfmaximumbaseline, linestyle='dashed')
+                
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], self.Gaussian(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], *popt, d), linestyle='dotted')
+                
                 #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], base[pp-20:pp+20], label='base')
                 #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], halfmaximumbaseline, label='base')
 
@@ -830,15 +848,17 @@ class ASpec(object):
         print("Using", cam)
   
         
-        # Create a camera instance        
+        # Create a camera instance
+        print("Creating camera instance")        
         self.cam = pypylon.factory.create_device(cam)       
         # Open camera and grep some images
+        print("Open camera")
         self.cam.open()
-        
+       
         self.cam.properties['ExposureTime'] = 100000.#100000.0#
         self.cam.properties['Gain'] = 5.0
         self.cam.properties['PixelFormat'] = 'Mono12'
-
+        print("Set camera properties")
 
     def camera_properties(self):
         # We can still get information of the camera back
@@ -1046,7 +1066,7 @@ if __name__ in ("__main__","__plot__"):
                 peakwidths[temp]['positions'].append(translation)
                 
                 for image_data in analyze.take_snapshots(1):
-                    imageio.imsave('../Basler spectra/Lasers/Climate chamber/ClimateChamberT'+str(temp)+'_pos'+str(inp)+'.tiff', image_data*16)#.astype(np.uint16)        
+                    imageio.imsave('../Basler spectra/Lasers/Climate chamber/16bit/0-40/'+str(temp)+'C/ClimateChamberT'+str(temp)+'_pos'+str(inp)+'.tiff', image_data*16)#.astype(np.uint16)        
                     wl_int_dict = analyze.backwards_spectral_fitting(image_data, resolution=1)
                     analyze.determine_peak_widths(wl_int_dict, peakwidths[temp])
                     #filename = os.path.join(fileDir, '..\\"Basler spectra"\\"Climate chamber"\\ClimateChamberT'+str(temp)+'_pos'+str(inp)+'.tiff')
