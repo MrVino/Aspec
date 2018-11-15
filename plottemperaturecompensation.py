@@ -19,6 +19,10 @@ prop_cycle = plt.rcParams['axes.prop_cycle']
 colors = prop_cycle.by_key()['color']
 
 
+
+#This script generates plots that illustrate the method that we use to determine the optimal focus position of the motorized translation stage on which the camera is mounted.At a given temperature, per laser wavelength, we plot the width of the laserpeak as a function of translation stage position. Then we fit a polynomial to the curve of each fiber, and determine the minimum of that curve. Finally we average the minima over the fibers, to determine the optimal focus position.
+
+
 #peakwidths = pickle.load( open( "laser_peak_widths_T0_final.p", "rb" ) )
 peakwidths = pickle.load( open( "laser_peak_widths_T0_16bit_0-40.p", "rb" ) )
 #peakwidths = pickle.load( open( "laser_peak_widths_T20_translation_tilt7.5.p", "rb" ) )
@@ -30,48 +34,21 @@ temp = 0
 used_fibers = [1,2,4,5,6,9,10]
 
 
-
+#Here we remove the translation stage position larger than 3500 um, and corresponding peakwidths, because they were shown to give strange peakwidths, which complicates the curve fitting.
 for t in [temp]:
 
     indices = np.where(np.asarray(peakwidths[t]['positions'])>3500)[0]
     
     for fibernr in sorted(list(set(peakwidths[t].keys()).difference(set(['positions'])))):
-        #print(indices)
         
         for wl in sorted(peakwidths[t][fibernr].keys()):
- 
-            #print(len(peakwidths[t][fibernr][wl]))
-            #print(peakwidths[t][fibernr][wl])        
+      
             peakwidths[t][fibernr][wl] = np.delete(np.array(peakwidths[t][fibernr][wl]), indices)
- 
-
-            #print(len(peakwidths[t][fibernr][wl]))
-            #print(peakwidths[t][fibernr][wl])
-            
-
             
     peakwidths[t]['positions'] = np.delete(np.array(peakwidths[t]['positions']), indices)
     print(t, peakwidths[t]['positions'])
 
 
-
-#print(peakwidths[temp]['positions'])
-'''
-for f in peakwidths[temp].keys():
-
-    if f == 'positions':
-
-        peakwidths[temp][f].extend(peakwidths2[temp][f])
-        peakwidths[temp][f].extend(peakwidths3[temp][f])
-
-    else:
-    
-        for w in peakwidths[temp][f].keys():
-            peakwidths[temp][f][w].extend(peakwidths2[temp][f][w])
-            peakwidths[temp][f][w].extend(peakwidths3[temp][f][w])
-    
-  
-'''    
 
 f, axarr = plt.subplots(3, sharex=True, figsize=(10,6))
 f2, axarr2 = plt.subplots(len(used_fibers), sharex=True, figsize=(10,len(used_fibers)*3))
@@ -88,10 +65,12 @@ optima402 = []
 optima637 = []
 optima856 = []
 
+
+#Sort the positions and corresponding peakwidths
 pos_sorting_indices = np.argsort(peakwidths[temp]['positions'])
 sorted_positions = np.array(peakwidths[temp]['positions'])[pos_sorting_indices]
+#Create an array for the curve fitting routine
 x = np.linspace(sorted_positions[0],sorted_positions[-1],10000)
-
 
         
 for fiber_index, fibernr in enumerate(sorted(used_fibers)):
@@ -103,48 +82,34 @@ for fiber_index, fibernr in enumerate(sorted(used_fibers)):
         
         sorted_wavelengths = np.array(peakwidths[temp][fibernr][wl])[pos_sorting_indices]
            
-        
+        #Fit a polynomial to the curve. A polynomial order of 6 gave the best results
         polcoefs = np.polyfit(sorted_positions, sorted_wavelengths, 6)
         
+        #Determine the minima of the polynomial by finding the real points where the derivative equals 0.
         derivative = np.polyder(polcoefs)
         roots = np.roots(derivative)
         realroots = roots[np.isreal(roots)]
         
+        #There can be more than 1 real root of the derivative, so we choose the one(s) that are in the domain for which the measured the peakwidths 
         likelyroots = realroots[np.where(np.logical_and(realroots>=sorted_positions[0], realroots<=sorted_positions[-1]))]
         
-        
+        #In case there's still more than 1 possible root, we choose the root for which the polynomial returns the smallest value
         ind_min = np.argmin(np.polyval(polcoefs, likelyroots))
-        print(likelyroots)
-        #print(likelyroots[ind_min])
-        print(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))])
-
-        #print('------')
-        #print(likelyroots)
-        #print('------')
-        #polcoefs4 = np.polyfit(sorted_positions, sorted_wavelengths, 4)
-        #polcoefs6 = np.polyfit(sorted_positions, sorted_wavelengths, 6)
-        
 
 
-
+        #Add the found minimum for each fiber to the array of the corresponding wavelength, such that we can take the mean later.
         if wl == 402:
             pi = 0
-
-            #if len(likelyroots)==1:
             
             optima402.append(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))])
             
         elif wl == 637:
             pi = 1
- 
-            #if len(likelyroots)==1:
             
             optima637.append(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))])           
             
         elif wl == 856:
 
-            #if len(likelyroots)==1:
-            
             optima856.append(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))])
 
             pi = 2
@@ -152,23 +117,16 @@ for fiber_index, fibernr in enumerate(sorted(used_fibers)):
         axarr[pi].plot(sorted_positions, sorted_wavelengths, label = "Fiber "+str(fibernr), color=colors[fibernr-1])
         axarr[pi].plot(x, np.polyval(polcoefs, x), linestyle='dashed', color='black')
         
-        #if len(likelyroots)==1:
         
         axarr[pi].vlines(likelyroots[np.argmin(np.polyval(polcoefs, likelyroots))], 0, 10, linestyle='dotted', color='black')
-            #print(likelyroots)
-        #axarr[pi].plot(x, np.polyval(polcoefs4, x), linestyle='dashed', label='O(4)')
-        #axarr[pi].plot(x, np.polyval(polcoefs6, x), linestyle='dashed', label='O(6)')
+
         
         
         axarr2[fiber_index].plot(sorted_positions, sorted_wavelengths, label = str(wl)+' nm', color=colors[pi**2+2*pi])
 
 
-
-#print(optima402, np.mean(optima402))
-#print(optima637, np.mean(optima637))        
-#print(optima856, np.mean(optima856))        
-
-
+'''
+#This is another method that we tried, but we no longer used. For each wavelength we averaged the data over all fibers, and then fitted a polynomial to that average curve (contrary to fitting a polynomial to the curve of each fiber seperately). We decided not to use this method, because the method above gave better results when visually comparing the determined minima to the curves.
 averages_402 = []
 averages_637 = []
 averages_856 = []
@@ -225,15 +183,15 @@ print(likelyroot_856, np.mean(optima856))
 #axarr[1].plot(sorted_positions, sorted_averages_637, label = "Averaged", color='blue', linestyle='dashed')
 #axarr[2].plot(sorted_positions, sorted_averages_856, label = "Averaged", color='blue', linestyle='dashed')
 
-axarr[0].vlines(np.mean(optima402), 0, 10, linestyle='dotted', color='red')
-axarr[1].vlines(np.mean(optima637), 0, 10, linestyle='dotted', color='red')
-axarr[2].vlines(np.mean(optima856), 0, 10, linestyle='dotted', color='red')
-
 
 #axarr[0].vlines(likelyroot_402, 0, 10, linestyle='dotted', color='blue')
 #axarr[1].vlines(likelyroot_637, 0, 10, linestyle='dotted', color='blue')
 #axarr[2].vlines(likelyroot_856, 0, 10, linestyle='dotted', color='blue')
+'''
 
+axarr[0].vlines(np.mean(optima402), 0, 10, linestyle='dotted', color='red')
+axarr[1].vlines(np.mean(optima637), 0, 10, linestyle='dotted', color='red')
+axarr[2].vlines(np.mean(optima856), 0, 10, linestyle='dotted', color='red')
 
 axarr[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
 axarr2[0].legend(loc='best', fancybox=True, framealpha=0.5, fontsize=8)
