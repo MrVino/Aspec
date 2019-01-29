@@ -124,7 +124,7 @@ class ASpec(object):
         #Identify the fiber number by the position of its brightest row on the detector
         return 10-np.argmax(np.isclose(self.fiber_edge_rows, mean_row, atol=(self.fiber_spacing-1)))
 
-    def separate_fibers(self, image, width=100):
+    def separate_fibers(self, image, width=25):
         #We stack the image along the x-axis in bins with a chosen width, summing the pixel values along the x-axis in the bin for each y-position. 
         #For each bin, the peakutils package is used to find the peaks along the y-axis, with the assumption that each peak correspond to a fiber. 
         #The position of each peak is saved and used to determine the curvature of the spectrum of each fiber. 
@@ -258,6 +258,7 @@ class ASpec(object):
 
 
     def spectral_fitting(self, image, pol_order = 1, lower_margin=30, upper_margin=40, threshold=25, binwidth=2, onthefly=False, bitsize=16):
+        #OUTDATED
         #Alternative routine to derive the spectrum of a single fiber. The main routine is backwards_spectral_fitting
         #The pixel positions are converted to wavelengths and consequently all the rows belonging to a single fiber are stacked. 
         #First the fibers are separated on the sensor based on their stacked intensity along the y-axis with a separate routine.
@@ -437,6 +438,12 @@ class ASpec(object):
         #Finally, the polynomial fit is used to map a preset array with wavelenghts to the pixel in each row that corresponds to that wavelength.
         #The pixel intensities found this way are averaged for every wavelength in the preset array. 
     
+
+        #If we use the lasers, we don't take the median pixel value of a row, but sum all the pixels in a row. We therefore need to increase the threshold    
+        if self.lasers is True:
+            threshold *= self.nx
+
+
        
         #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
         wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution, resolution)
@@ -464,7 +471,13 @@ class ASpec(object):
             print("Fiber", fibernr)            
             
             #The median pixel values for every row that belongs to this fiber
-            rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
+            if self.lasers is True:
+                
+                rowmedians = np.sum(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
+            
+            else:
+                rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
+
 
             #Determine between which rows the median pixel values are larger than the threshold
             try:
@@ -540,6 +553,7 @@ class ASpec(object):
                     #Convert the preset wavelengths to pixel positions (column = x-positions, row = y-positions)
                     #Both lists are equally long and the n-th entry of each list together give an x,y-position       
                     mapping_columns.append((wls_mapped_backwards - polcoefs[1])/polcoefs[0])
+                    #filled with identical values of this rownumber
                     mapping_rows.append(np.full(len(wls_mapped_backwards),r))
 
 
@@ -556,7 +570,7 @@ class ASpec(object):
             mapping_rows = np.array(mapping_rows).flatten()
             
             #The ndimage.map_coordinates Scipy function maps the wavelength to its corresponding pixel position for all rows belonging to this fiber
-            #this gives us 1 long array in which the intensities per row are lined up 
+            #this gives us 1 long array in which the intensities are lined up per row
             interpolated_intensities = ndimage.map_coordinates(image, [mapping_rows, mapping_columns], order=1)
             
             print("Maximum interpolated intensity = ", np.max(interpolated_intensities))
@@ -812,8 +826,11 @@ class ASpec(object):
     def pixelpositions_of_peaks(self, image, lower_margin=30, upper_margin=40, threshold=30, bitsize=16, binwidth=1, pol_order = 1, fitpeaks=None):
         #Based on the spectral fitting routines, this routine returns the positions of the calibration peaks for each row. 
         #This routine can be used to determine the shift of the spectrum on the detector with changing temperature.
-    
-    
+
+        #If we use the lasers, we don't take the median pixel value of a row, but sum all the pixels in a row. We therefore need to increase the threshold    
+        if self.lasers is True:
+            threshold *= self.nx
+
     
         #plt.imshow(image)
         
@@ -830,7 +847,7 @@ class ASpec(object):
         #Create an empty dictionary to which we add the fitted wavelengths and corresponding intensities for each fiber
         peak_positions_all_fibers = {}
     
-        
+        #array of x pixel positions
         x = np.arange(self.nx)
   
         for i in range(self.n_fibers):
@@ -877,13 +894,14 @@ class ASpec(object):
             #rows = [np.int(mean_y_position_fiber)]
             print(len(rows), "rows, from row", rows[0],"to row",rows[-1])
             
-            
+            #First add all rows without shifting them and determine the peak position for the collapsed fiber
             collapsed_fiber = np.sum(image[rows[0]:rows[-1],:], axis=0).astype(float)
             
             if self.lasers is not True:
             
                 collapsed_fiber = len(rows)*(2**bitsize -1)-collapsed_fiber
             
+            #D is the offset used in the gaussian fitting routine (below)
             d = np.min(collapsed_fiber)
             
             print(d)
@@ -907,7 +925,8 @@ class ASpec(object):
                 
                     #plt.plot(x[cpp-20:cpp+20], collapsed_fiber[cpp-20:cpp+20])
                     #plt.show()
-                
+                    
+                    #We fit a guassian to the peaks in the collapsed fiber and save the mean of the gaussian (i.e. the position of the 'collapsed' peak)
                     popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), x[cpp-20:cpp+20], collapsed_fiber[cpp-20:cpp+20], p0=[np.max(collapsed_fiber[cpp-20:cpp+20]), cpp, 1])
                                                 
     
@@ -915,12 +934,16 @@ class ASpec(object):
                     #plt.plot(x[cpp-20:cpp+20], self.Gaussian(x[cpp-20:cpp+20], *popt, d))
                     #plt.vlines(popt[1], d, self.Gaussian(popt[1], *popt, d), linestyles='dashed', color='black', alpha=0.5)
                     #plt.show()
+                    
+                    #Save the mean of the fitted gaussian
                     fiber_averaged_peak_positions.append(popt[1])                
                 
                 
                 
                 
             else:
+                #This routine has not been developed yet for the HoDi spectrum
+                
                 collapsed_peak_positions = np.array(peakutils.indexes(collapsed_fiber, thres=0.25, min_dist=60))            
                 
                 for wl in fitpeaks:
@@ -937,6 +960,8 @@ class ASpec(object):
             print('----------------------------')
             
             for r in rows:
+                #Now, in the same way, determine the peak positions for each row in this fiber
+            
                            
                 #Since the HoDi filter gives an absorption spectrum we take 2**bitsize -1 - pixelvalue for each pixel in this row
                 #to determine the position of calibrated wavelength peaks (i.e. we convert minima to maxima).
@@ -966,18 +991,18 @@ class ASpec(object):
                 '''
                 
                 if len(peak_positions)==len(fitpeaks):
+                
+                    #Only proceed if we find all the peak positions in this row
                     
                     try:
                     
-                        #An empty array to which we add the subset of the 5 calibrated absorption lines from all absorption lines found  
+                        #An empty array to which we add the peak positions of this row 
                         fit_peak_positions = []
                                           
                         #We loop over all HoDi wavelength peak position
                         for peak in peak_positions:
-                            #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
-                            #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
-                            #Remove peaks part of a 'double' peak as they can cause confusion with wavelength shift as a function of temperature 
-                            
+
+                            #Repeat the gaussian fitting for each row and add them to the array                              
                             if self.lasers is True:
                                 popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), x[peak-20:peak+20], image[r,peak-20:peak+20], p0=[np.max(image[r,peak-20:peak+20]), peak, 1])
                                 fit_peak_positions.append(popt[1])
@@ -1004,11 +1029,11 @@ class ASpec(object):
                         fit_peak_positions = np.array(fit_peak_positions)
                                  
                         #Fit a polynomial with order pol_order to the positions
-                        #This polynomial determines how the pixel positions are converted to wavelengths for this row
+                        #This polynomial determines how this row is shifted with respect to the collapsed fiber
                         polcoefs = np.polyfit(fit_peak_positions, fiber_averaged_peak_positions, pol_order)
                         
                                   
-                        #Add the fitted wavelength positions of this row to the wavelengths that have been fitted for previous rows belonging to this fiber.    
+                        #Shift the pixel positions position of this row such that they line up with the peak positions of the collapsed fiber 
                         unsorted_positions.append(np.polyval(polcoefs, x))
         
                         #Add the pixel intensities of this row accordingly
@@ -1033,11 +1058,11 @@ class ASpec(object):
             bins = np.arange(int(round(min(unsorted_positions)))-binwidth/2, int(round(max(unsorted_positions)))+1-binwidth/2, binwidth)       
             
             #The numpy digitize routine bins the unsorted pixel positions according to the provided bins.
-            #It returns the indices that map each wavelength to its corresponding bin
+            #It returns the indices that map each pixel position to its corresponding bin
             binned_inds = np.digitize(unsorted_positions, bins)
             
             #The indices given by the digitize routine are used to map the intensties to their corresponding bin
-            #and take the mean value of that bin
+            #and subsequently we sum all the intensity values corresponding to that bin
             bin_sums = np.array([unsorted_intensities[binned_inds == idb].sum() for idb in range(1, len(bins))])
                         
             #Remove the last element of the bins (such that the bins array has the same length as the bin_means array),
@@ -1050,6 +1075,7 @@ class ASpec(object):
             #plt.plot(binned_positions, bin_sums, linestyle='dotted', color='yellow')
             
 
+            #Now all rows have been shifted and 'correctly collapsed', and we perform a final gaussian fitting to determine the pixel position of the peaks
             if self.lasers is True:
                 collapsed_peak_positions = np.array(peakutils.indexes(bin_sums, thres=0.1, min_dist=500))
 
@@ -1075,6 +1101,8 @@ class ASpec(object):
             
             
             else:
+                #I don't think this works for anything else than the lasers
+            
                 collapsed_peak_indices = np.array(peakutils.indexes(bin_sums, thres=0.25, min_dist=60))            
                 collapsed_peak_positions = binned_positions[collapsed_peak_indices]
     
@@ -1092,7 +1120,8 @@ class ASpec(object):
         
         return peak_positions_all_fibers
 
-    def determine_peak_widths(self, fitted_wavelengths_all_fibers):
+
+    def determine_peak_widths(self, fitted_wavelengths_all_fibers, peakwidthdictionary):
 
        
         for fibernr in fitted_wavelengths_all_fibers.keys():
@@ -1100,61 +1129,55 @@ class ASpec(object):
 
             print("Fiber", fibernr)
             #Determine the positions of the laser peaks
-            peak_positions = np.array(peakutils.indexes(np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'])-fitted_wavelengths_all_fibers[fibernr]['intensities'], thres=0.1, min_dist=20))
+            peak_positions = np.array(peakutils.indexes(fitted_wavelengths_all_fibers[fibernr]['intensities'], thres=0.1, min_dist=60))
             base = peakutils.baseline(fitted_wavelengths_all_fibers[fibernr]['intensities'], 7)
 
-
-            plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'], fitted_wavelengths_all_fibers[fibernr]['intensities'])
-
-            plt.legend()
-
-
-
-            hodi_peak_positions = []
+         
             
-            
-            for wl in self.hodi_peaks:
-                #We compare the position of the found peaks to the theoretically expected positions of the HoDi peaks.
-                #The found peaks that are nearest to the theoretically expected peaks are identified as the HoDi peaks.
-                peak = self.find_nearest(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][peak_positions], wl)
-                print(peak)
-                print(np.where(fitted_wavelengths_all_fibers[fibernr]['wavelengths']==peak)[0][0])
-                hodi_peak_positions.append(np.where(fitted_wavelengths_all_fibers[fibernr]['wavelengths']==peak)[0][0])
-                #print(wl, fitted_wavelengths_all_fibers[fibernr]['wavelengths'][peak])
+            for pp in peak_positions:
+                #print("peak = ", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
                 
-            hodi_peak_positions = np.array(hodi_peak_positions)
+                laserwl = self.find_nearest(np.fromiter(peakwidthdictionary[fibernr].keys(), dtype=int), fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
 
-            for pp in hodi_peak_positions:
-                plt.vlines(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 0, np.max(fitted_wavelengths_all_fibers[fibernr]['intensities']))
-            plt.show()
-
-            print(hodi_peak_positions)
-            
-            for pp in hodi_peak_positions:
-                print("peak = ", fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp])
-                print(pp)
-                
-                halfmaximumbaseline = np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])/2 - base[pp-20:pp+20]
+                halfmaximumbaseline = np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])/2 - base[pp-20:pp+20]/2
 
               
                 
 
-                #We fit a cubic spline to each laser emission peak - (peak_max/2) and the use its roots, i.e. where it's 0, to determine the positions
+                #We fit a cubic spline to each laser emission peak - (peak_max/2) and then use its roots, i.e. where it's 0, to determine the positions
                 #that indicate the Full Width Half Maximum (https://stackoverflow.com/questions/10582795/finding-the-full-width-half-maximum-of-a-peak)
                 spline = UnivariateSpline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20],fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-halfmaximumbaseline, s=0)
-                print("Spline roots = ", spline.roots())
+                #print("Spline roots = ", spline.roots())
                 splineroots = spline.roots()
                 
+                d = np.mean(base[pp-20:pp+20])
+                popt, pcov = curve_fit(lambda x, a, b, c: self.Gaussian(x, a, b, c, d), fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-base[pp-20:pp+20], p0=[np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]-base[pp-20:pp+20]), fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 1])
+                                            
+                #print("FWHM, from Gaussian = ",popt[2]*2*np.sqrt(2*np.log(2)), 2.355*popt[2], ", from spline is = ", splineroots[-1]-splineroots[0])
                 
+                
+                
+                '''
                 plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], spline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20])+halfmaximumbaseline)
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], base[pp-20:pp+20], label='base')
-
-
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], spline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20])+halfmaximumbaseline, linestyle='dashed')
                 
-                plt.vlines(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 0, np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]), linestyles='dotted')
-                #plt.hlines(np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])/2, splineroots[-1], splineroots[0], linestyles='dashed')     
-                plt.show() 
+                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], self.Gaussian(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], *popt, d), linestyle='dotted')
+                '''
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], base[pp-20:pp+20], label='base')
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], halfmaximumbaseline, label='base')
+
+                #plt.vlines(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 0, np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]), linestyles='dotted', color='white')  
+                
+                #plt.vlines(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp], 0, np.max(fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20]), linestyles='dotted')
+                #plt.hlines(np.max(halfmaximumbaseline), splineroots[-1], splineroots[0], linestyles='dashed', color='white')
+                #plt.legend()
+                #plt.show()  
+  
+
+           
+                peakwidthdictionary[fibernr][laserwl].append(splineroots[-1]-splineroots[0])
+
+
         
 
     def sum_rows(self, image):
@@ -1199,8 +1222,8 @@ class ASpec(object):
         # Open camera and grep some images
         self.cam.open()
         
-        self.cam.properties['ExposureTime'] = 100000.#100000.0#
-        self.cam.properties['Gain'] = 5.0
+        self.cam.properties['ExposureTime'] = 2000.#100000.0#
+        self.cam.properties['Gain'] = 0
         self.cam.properties['PixelFormat'] = 'Mono12'
         
 
@@ -1305,11 +1328,6 @@ if __name__ in ("__main__","__plot__"):
                       dest="file", 
                       default = 'Fiberguide_stacked_HoDi_absorption_7fibers.tiff',
                       help="The captured image that you want to plot")
-    parser.add_argument("-n", 
-                      dest="n_fibers", 
-                      default = 10,
-                      type=int,
-                      help="The number of fibers on the image")
 
 
     args = parser.parse_args()

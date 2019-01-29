@@ -58,11 +58,11 @@ class ASpec(object):
         
         #Determine how many fibers are used. This sets the number of fibers, self.n_fibers, and the polynomial coefficients 
         #that belong to each fiber, self.fiber_positions_polynomial_coefficients.
-        if image is None:
-            self.connect_camera()
+        #if image is None:
+        self.connect_camera()
         
-            for image_data in self.take_snapshots(1):
-                image = image_data
+        #for image_data in self.take_snapshots(1):
+        image = image_data
                               
 
         #These values are used to identify each fiber based on its position on the detector
@@ -171,7 +171,7 @@ class ASpec(object):
             xc = np.array( (i+0.5)*width + x0 )
             
             
-            plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
+            #plt.plot(xc*np.ones_like(ypos), ypos, 'ro')
 
             if len(ypos)>0:
 
@@ -202,11 +202,11 @@ class ASpec(object):
         ypositions_temp = ypositions[indices_all_fibers_found]
         ypositions = np.vstack(ypositions[indices_all_fibers_found])
         
-        
+        '''
         for j, p in enumerate(xcs):
         
             plt.plot(p*np.ones_like(ypositions_temp[j]), ypositions_temp[j], 'bo')
-        
+		'''
         
         
         # Fit a low order polynomial to the positions
@@ -214,7 +214,8 @@ class ASpec(object):
 		
         
 		#Plot the found fits
-        x = np.linspace(x0, x1, 101)
+        '''
+		x = np.linspace(x0, x1, 101)
        
         plt.imshow(image_copy, origin='lower', cmap='gist_gray',vmin=0, vmax=2)
         for i in range(self.n_fibers):
@@ -223,7 +224,7 @@ class ASpec(object):
         
         plt.xlim(0,self.nx)
         plt.ylim(0, self.ny)
-        
+        '''
 
 
         x = np.arange(self.nx)
@@ -242,7 +243,7 @@ class ASpec(object):
             
             print(fibernr)
 
-        plt.show()
+        #plt.show()
         self.fiber_positions_polynomial_coefficients = polcoefs
 
 
@@ -302,10 +303,10 @@ class ASpec(object):
                 
                 
                 
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], spline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20])+halfmaximumbaseline, linestyle='dashed')
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], fitted_wavelengths_all_fibers[fibernr]['intensities'][pp-20:pp+20])
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], spline(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20])+halfmaximumbaseline, linestyle='dashed')
                 
-                plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], self.Gaussian(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], *popt, d), linestyle='dotted')
+                #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], self.Gaussian(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], *popt, d), linestyle='dotted')
                 
                 #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], base[pp-20:pp+20], label='base')
                 #plt.plot(fitted_wavelengths_all_fibers[fibernr]['wavelengths'][pp-20:pp+20], halfmaximumbaseline, label='base')
@@ -340,12 +341,11 @@ class ASpec(object):
         #Finally, the polynomial fit is used to map a preset array with wavelenghts to the pixel in each row that corresponds to that wavelength.
         #The pixel intensities found this way are averaged for every wavelength in the preset array. 
     
-
         #If we use the lasers, we don't take the median pixel value of a row, but sum all the pixels in a row. We therefore need to increase the threshold    
         if self.lasers is True:
             threshold *= self.nx
-
-    
+            
+                
         print(np.max(image))
     
         #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
@@ -374,7 +374,12 @@ class ASpec(object):
             print("Fiber", fibernr)            
             
             #The median pixel values for every row that belongs to this fiber
-            rowmedians = np.sum(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
+            if self.lasers is True:
+            
+                rowmedians = np.sum(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
+            
+            else:
+                rowmedians = np.median(image[(int(mean_y_position_fiber)-lower_margin):(int(mean_y_position_fiber)+upper_margin),:], axis=1)
 
             #Determine between which rows the median pixel values are larger than the threshold
             try:
@@ -755,7 +760,7 @@ class ASpec(object):
         print("Open camera")
         self.cam.open()
        
-        self.cam.properties['ExposureTime'] = 5000.#100000.0#
+        self.cam.properties['ExposureTime'] = 2000.#100000.0#
         self.cam.properties['Gain'] = 0.
         self.cam.properties['PixelFormat'] = 'Mono12'
         print("Set camera properties")
@@ -879,11 +884,11 @@ if __name__ in ("__main__","__plot__"):
         #To use this script with saved images, pypylon does not have to be installed 
         import pypylon
         #At low temperatures light is lost in the fiberguide and not all fibers may be recognized by the Focus.py routines. To bypass this problem, you can give the routine an image taken at a higher temperature where the fibers were still visible. If you do so, you need to read-in the image, feed it to the Aspec instance, and don't forget to comment out the take_snapshots in __init__. self.connect_camera() should still be active.
-        #image_data = imread('ClimateChamberT20_pos2500.tiff').astype(np.float32)    
+        image_data = imread('ClimateChamberT20_pos1500.tiff').astype(np.float32)    
         plt.style.use('dark_background')
-        #analyze = ASpec(image=image_data, lasers=True)
-        analyze = ASpec(lasers=True)
-
+        analyze = ASpec(image=image_data, lasers=True)
+        #analyze = ASpec(lasers=True)
+        dir = "../Basler spectra/Fiberguide and lasers/Climate chamber/16bit/aluminium prototype/aluminium rod/"
         #Create an empty dictionary in which we store the laser peakwidths at different temperatures
         peakwidths = {}
         
@@ -974,7 +979,7 @@ if __name__ in ("__main__","__plot__"):
                 #Take a snapshot at this actuator position
                 for image_data in analyze.take_snapshots(1):
                     #Store the snapshot for later
-                    imageio.imsave('../Basler spectra/Fiberguide and lasers/Climate chamber/16bit/aluminium prototype/'+str(temp)+'C/ClimateChamberT'+str(temp)+'_pos'+str(inp)+'.tiff', image_data*16)#.astype(np.uint16)
+                    imageio.imsave(dir+str(temp)+'C/ClimateChamberT'+str(temp)+'_pos'+str(inp)+'.tiff', image_data*16)#.astype(np.uint16)
                     #Convert the pixel positions of each fiber spectrum to wavelenghts 
                     wl_int_dict = analyze.backwards_spectral_fitting(image_data, resolution=1)
                     #determine the peak widths in terms of wavelength. This cannot be done for pixelpositions because the spectra are curved and rows need to be stacked
@@ -984,7 +989,7 @@ if __name__ in ("__main__","__plot__"):
                     
                     
                 #Save the dictionary with the actuator positions and corresponding peakwidths 
-                pickle.dump(peakwidths, open( 'laser_peak_widths_T'+str(temp)+'.p', "wb" ) )
+                pickle.dump(peakwidths, open(dir+str(temp)+'C/laser_peak_widths_T'+str(temp)+'.p', "wb" ) )
             
             
             
