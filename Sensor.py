@@ -148,8 +148,8 @@ class ASpec(object):
             #We set all values higher than two standard deviations above the mean to 1, and the rest to 0. 
             #This makes it easier to separate the fibers in case we use the lasers for alignment (and only have three thin spectral lines in our image)
             image_copy.setflags(write=1)
-            image_copy[image_copy<(np.mean(image)+2.*np.std(image))] = 0
-            image_copy[image_copy>(np.mean(image)+2.*np.std(image))] = 1
+            image_copy[image_copy<(np.mean(image)+1.*np.std(image))] = 0
+            image_copy[image_copy>(np.mean(image)+1.*np.std(image))] = 1
         
         
         for i in range(num_steps):
