@@ -155,8 +155,8 @@ class ASpec(object):
             #We set all values higher than two standard deviations above the mean to 1, and the rest to 0. 
             #This makes it easier to separate the fibers in case we use the lasers for alignment (and only have three thin spectral lines in our image)
             image_copy.setflags(write=1)
-            image_copy[image_copy<(np.mean(image)+2.*np.std(image))] = 0
-            image_copy[image_copy>(np.mean(image)+2.*np.std(image))] = 1
+            image_copy[image_copy<(np.mean(image)+1.*np.std(image))] = 0
+            image_copy[image_copy>(np.mean(image)+1.*np.std(image))] = 1
         
         
         for i in range(num_steps):
@@ -331,7 +331,7 @@ class ASpec(object):
 
 
 
-    def backwards_spectral_fitting(self, image, lower_margin=30, upper_margin=40, threshold=25, resolution=2, onthefly=False):
+    def backwards_spectral_fitting(self, image, lower_margin=30, upper_margin=40, threshold=15, resolution=2, onthefly=False):
         #Main routine to derive the spectrum of a single fiber. 
         #First the fibers are separated on the sensor based on their stacked intensity along the y-axis.
         #Then for each fiber, the average position of the peak intensity on the y-axis is taken as the central row.
@@ -346,7 +346,7 @@ class ASpec(object):
             threshold *= self.nx
             
                 
-        print(np.max(image))
+        print("Threshold = ", threshold)
     
         #The preset wavelength array, running from self.lambda_min to 1000 nm with a spacing set by the resolution argument
         wls_mapped_backwards = np.arange(self.lambda_min, 1000+resolution, resolution)
